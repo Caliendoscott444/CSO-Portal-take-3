@@ -67,9 +67,9 @@ function formatDuration(totalSeconds: number) {
 }
 
 type AdminProfile = {
-    id: string;
-    discord_id: string | null;
-    discord_username: string | null;
+  id: string;
+  discord_id: string | null;
+  discord_username: string | null;
   callsign: string | null;
   member_ranks: string[] | null;
   access_level: string;
@@ -139,6 +139,7 @@ export default function Admin() {
   const { profile: myProfile } = useAuth();
   const [members, setMembers] = useState<AdminProfile[]>([]);
   const [loaRequests, setLoaRequests] = useState<AdminLoaRequest[]>([]);
+  const [activeLoas, setActiveLoas] = useState<AdminLoaRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [disciplineDrafts, setDisciplineDrafts] = useState<
@@ -290,7 +291,7 @@ export default function Admin() {
 
   const load = async () => {
     setLoading(true);
-    const [{ data: profiles }, { data: loas }, { data: waveRows }] = await Promise.all([
+    const [{ data: profiles }, { data: loas }, { data: activeLoaRows }, { data: waveRows }] = await Promise.all([
       supabase
         .from('profiles')
         .select(
@@ -303,12 +304,18 @@ export default function Admin() {
         .eq('status', 'pending')
         .order('created_at', { ascending: true }),
       supabase
+        .from('loa_requests')
+        .select('*')
+        .eq('status', 'approved')
+        .order('end_date', { ascending: true }),
+      supabase
         .from('shift_waves')
         .select('*')
         .order('started_at', { ascending: false }),
     ]);
     setMembers(profiles ?? []);
     setLoaRequests(loas ?? []);
+    setActiveLoas(activeLoaRows ?? []);
     setWaves(waveRows ?? []);
 
     const current = (waveRows ?? []).find((w) => w.is_current);
@@ -512,6 +519,55 @@ export default function Admin() {
         m.id === userId ? { ...m, loa_status: status === 'approved' ? 'active' : 'clear' } : m,
       ),
     );
+    if (status === 'approved') {
+      setActiveLoas((prev) => {
+        const loaRow = loaRequests.find((r) => r.id === loaId);
+        if (!loaRow) return prev;
+        return [...prev, { ...loaRow, status: 'approved' }];
+      });
+    }
+    setSavingId(null);
+  };
+
+  const endLoa = async (loaId: string, userId: string) => {
+    setSavingId(loaId);
+    const member = members.find((m) => m.id === userId);
+
+    await supabase.from('loa_requests').update({ status: 'completed' }).eq('id', loaId);
+    await supabase.from('profiles').update({ loa_status: 'clear' }).eq('id', userId);
+
+    if (member?.discord_id) {
+      try {
+        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-loa-role`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ discordUserId: member.discord_id, action: 'remove' }),
+        });
+      } catch {
+        // silent - Discord role removal is best-effort
+      }
+      try {
+        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/end-loa-notify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            discordId: member.discord_id,
+            discordUsername: member.discord_username,
+          }),
+        });
+      } catch {
+        // silent - Discord notification is best-effort
+      }
+    }
+
+    setActiveLoas((prev) => prev.filter((r) => r.id !== loaId));
+    setMembers((prev) => prev.map((m) => (m.id === userId ? { ...m, loa_status: 'clear' } : m)));
     setSavingId(null);
   };
 
@@ -808,6 +864,38 @@ export default function Admin() {
                       Deny
                     </button>
                   </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="mb-3 mt-10 text-lg font-bold text-white">
+            Active LOAs {activeLoas.length > 0 && `(${activeLoas.length})`}
+          </p>
+          <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/50">
+            {activeLoas.length === 0 && (
+              <p className="px-5 py-6 text-sm text-zinc-500">No members currently on LOA.</p>
+            )}
+            {activeLoas.map((r) => {
+              const member = members.find((m) => m.id === r.user_id);
+              return (
+                <div key={r.id} className="flex items-center justify-between gap-4 px-5 py-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-white">
+                      {member?.discord_username ?? 'Unknown member'}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {r.start_date} → {r.end_date}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-400">{r.reason}</p>
+                  </div>
+                  <button
+                    onClick={() => endLoa(r.id, r.user_id)}
+                    disabled={savingId === r.id}
+                    className="shrink-0 rounded-lg bg-blue-500/15 px-3 py-1.5 text-xs font-bold text-blue-400 hover:bg-blue-500/25 disabled:opacity-50"
+                  >
+                    End LOA
+                  </button>
                 </div>
               );
             })}
