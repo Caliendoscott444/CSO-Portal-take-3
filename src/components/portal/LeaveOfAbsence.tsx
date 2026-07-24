@@ -47,12 +47,16 @@ export default function LeaveOfAbsence() {
     if (!profile) return;
     setError(null);
     setSubmitting(true);
-    const { error: insertErr } = await supabase.from('loa_requests').insert({
-      user_id: profile.id,
-      start_date: startDate,
-      end_date: endDate,
-      reason,
-    });
+    const { data: insertedLoa, error: insertErr } = await supabase
+      .from('loa_requests')
+      .insert({
+        user_id: profile.id,
+        start_date: startDate,
+        end_date: endDate,
+        reason,
+      })
+      .select()
+      .single();
     setSubmitting(false);
     if (insertErr) {
       setError(insertErr.message);
@@ -76,6 +80,7 @@ export default function LeaveOfAbsence() {
             orgAbbr: 'CSO',
             commanderDiscordId: selectedCommander?.discord_id ?? '',
             commanderName: selectedCommander?.discord_username ?? '',
+            loaId: insertedLoa?.id ?? '',
           }),
         }
       );
