@@ -1,11 +1,18 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
-import Hero from './components/Hero';
-import Departments from './components/Departments';
-import Command from './components/Command';
-import Businesses from './components/Businesses';
-import About from './components/About';
 import Footer from './components/Footer';
+import ApplyBanner from './components/ApplyBanner';
+import ScrollGlow from './components/ScrollGlow';
+import HomePage from './pages/HomePage';
+import DivisionsPage from './pages/DivisionsPage';
+import PersonnelPage from './pages/PersonnelPage';
+import CommandPage from './pages/CommandPage';
+import PartnersPage from './pages/PartnersPage';
+import AboutPage from './pages/AboutPage';
+import ApplicationsPage from './pages/ApplicationsPage';
+import PicturesPage from './pages/PicturesPage';
+import SuggestionsPage from './pages/SuggestionsPage';
+import PersonnelSuggestionsPage from './pages/PersonnelSuggestionsPage';
 import { AuthProvider } from './contexts/AuthContext';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import Login from './components/portal/Login';
@@ -14,20 +21,25 @@ import PortalLayout from './components/portal/PortalLayout';
 import Dashboard from './components/portal/Dashboard';
 import StartShift from './components/portal/StartShift';
 import LeaveOfAbsence from './components/portal/LeaveOfAbsence';
+import Ranks from './components/portal/Ranks';
+import Roster from './components/portal/Roster';
+import Admin from './components/portal/Admin';
+import Profile from './components/portal/Profile';
 import ComingSoon from './components/portal/ComingSoon';
+import Pictures from './components/portal/Pictures';
+import MediaManager from './components/portal/MediaManager';
+import Applications from './components/portal/Applications';
+import Units from './components/portal/Units';
+import Leaderboard from './components/portal/Leaderboard';
 
-function PublicSite() {
+function PublicSite({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      <ScrollGlow />
       <Navbar />
-      <main>
-        <Hero />
-        <Departments />
-        <Command />
-        <Businesses />
-        <About />
-      </main>
+      <main className="relative z-10">{children}</main>
       <Footer />
+      <ApplyBanner />
     </div>
   );
 }
@@ -66,18 +78,32 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<PublicSite />} />
+          {/* Public site — separate pages, matching jcrp-mshp.com's structure */}
+          <Route path="/" element={<PublicSite><HomePage /></PublicSite>} />
+          <Route path="/applications" element={<PublicSite><ApplicationsPage /></PublicSite>} />
+          <Route path="/divisions" element={<PublicSite><DivisionsPage /></PublicSite>} />
+          <Route path="/personnel" element={<PublicSite><PersonnelPage /></PublicSite>} />
+          <Route path="/command" element={<PublicSite><CommandPage /></PublicSite>} />
+          <Route path="/partners" element={<PublicSite><PartnersPage /></PublicSite>} />
+          <Route path="/about" element={<PublicSite><AboutPage /></PublicSite>} />
+          <Route path="/pictures" element={<PublicSite><PicturesPage /></PublicSite>} />
+          <Route path="/suggestions" element={<PublicSite><SuggestionsPage /></PublicSite>} />
+            <Route path="/personnel-suggestions" element={<PublicSite><PersonnelSuggestionsPage /></PublicSite>} />
+
+          {/* Member portal — untouched */}
           <Route path="/login" element={<Login />} />
           <Route path="/portal" element={<Portal><Dashboard /></Portal>} />
           <Route path="/portal/shifts" element={<Portal><StartShift /></Portal>} />
           <Route path="/portal/loa" element={<Portal><LeaveOfAbsence /></Portal>} />
-          <Route path="/portal/profile" element={<Portal><ComingSoon title="My Profile" /></Portal>} />
-          <Route path="/portal/notifications" element={<Portal><ComingSoon title="Notifications" /></Portal>} />
-          <Route path="/portal/roster" element={<Portal><ComingSoon title="Live Roster" /></Portal>} />
-          <Route path="/portal/subdivisions" element={<Portal><ComingSoon title="Subdivisions" /></Portal>} />
-          <Route path="/portal/applications" element={<Portal><ComingSoon title="Applications" /></Portal>} />
-          <Route path="/portal/ranks" element={<Portal><ComingSoon title="Ranks" /></Portal>} />
-          <Route path="/portal/media" element={<Portal><ComingSoon title="Pictures" /></Portal>} />
+          <Route path="/portal/profile" element={<Portal><Profile /></Portal>} />
+          <Route path="/portal/roster" element={<Portal><Roster /></Portal>} />
+          <Route path="/portal/subdivisions" element={<Portal><Units /></Portal>} />
+          <Route path="/portal/leaderboard" element={<Portal><Leaderboard /></Portal>} />
+          <Route path="/portal/applications" element={<Portal><Applications /></Portal>} />
+          <Route path="/portal/ranks" element={<Portal><Ranks /></Portal>} />
+          <Route path="/portal/media" element={<Portal><Pictures /></Portal>} />
+          <Route path="/portal/media-manager" element={<Portal><MediaManager /></Portal>} />
+          <Route path="/portal/admin" element={<Portal><Admin /></Portal>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

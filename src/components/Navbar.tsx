@@ -1,83 +1,81 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Menu, X } from 'lucide-react';
-import { DISCORD_URL, ORG_NAME, ORG_ABBR } from '../data';
+import { NavLink, Link } from 'react-router-dom';
+import { DISCORD_URL, ORG_ABBR } from '../data';
 
 const links = [
-  { href: '#home', label: 'Home' },
-  { href: '#divisions', label: 'Divisions' },
-  { href: '#command', label: 'Command' },
-  { href: '#partners', label: 'Partners' },
-  { href: '#about', label: 'About' },
+  { to: '/', label: 'Home' },
+  { to: '/applications', label: 'Applications' },
+  { to: '/divisions', label: 'Divisions' },
+  { to: '/personnel', label: 'Personnel' },
+  { to: '/command', label: 'Command' },
+  { to: '/partners', label: 'Partners' },
+  { to: '/pictures', label: 'Pictures' },
+  { to: '/suggestions', label: 'Suggestions' },
+    { to: '/personnel-suggestions', label: 'Personnel Suggestions' },
+  { to: '/about', label: 'About' },
 ];
 
 export default function Navbar() {
-  const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
-    onScroll();
-    window.addEventListener('scroll', onScroll);
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
   return (
-    <header
-      className={`fixed inset-x-0 top-0 z-50 transition-all duration-300 ${
-        scrolled
-          ? 'bg-zinc-950/85 backdrop-blur-xl border-b border-zinc-800/80'
-          : 'bg-transparent'
-      }`}
-    >
-      <nav className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3.5 lg:px-8">
-        <a href="#home" className="flex items-center gap-3 group">
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-[#0a0f1c]">
+      <nav className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3 lg:px-8">
+        <Link to="/" className="flex items-center gap-3 group">
           <img
             src="/CSO_CORPORATION_LOGO_1-2.png"
             alt={`${ORG_ABBR} Corporation Logo`}
-            className="h-10 w-10 object-contain brightness-0 invert opacity-90 group-hover:opacity-100 transition-opacity"
+            className="h-9 w-9 object-contain opacity-90 group-hover:opacity-100 transition-opacity"
           />
           <span className="flex flex-col leading-tight">
             <span className="text-sm font-bold tracking-wide text-white">
+              Comet Strategic Operations
+            </span>
+            <span className="text-[10px] uppercase tracking-[0.2em] text-amber-400">
               {ORG_ABBR} Corporation
             </span>
-            <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">
-              Roblox · ERLC
-            </span>
           </span>
-        </a>
+        </Link>
 
-        <ul className="hidden items-center gap-1 md:flex">
+        <ul className="hidden items-center gap-1 rounded-full bg-white/5 p-1 md:flex">
           {links.map((l) => (
-            <li key={l.href}>
-              <a
-                href={l.href}
-                className="rounded-md px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800/60 hover:text-white"
+            <li key={l.to}>
+              <NavLink
+                to={l.to}
+                end={l.to === '/'}
+                className={({ isActive }) =>
+                  `rounded-full px-3.5 py-1.5 text-sm font-semibold transition-colors ${
+                    isActive
+                      ? 'bg-white text-zinc-950'
+                      : 'text-zinc-300 hover:text-white'
+                  }`
+                }
               >
                 {l.label}
-              </a>
+              </NavLink>
             </li>
           ))}
         </ul>
 
         <div className="flex items-center gap-3">
           <a
-            href="/login"
-            className="hidden items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900/60 px-4 py-2.5 text-sm font-semibold text-zinc-200 transition-colors hover:bg-zinc-800 sm:inline-flex"
-          >
-            Member Portal
-          </a>
-          <a
             href={DISCORD_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden sm:inline-flex items-center gap-2 rounded-lg bg-[#5865F2] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition-all hover:bg-[#4752c4] hover:shadow-indigo-500/40 hover:-translate-y-0.5"
+            className="hidden text-sm font-semibold text-zinc-300 transition-colors hover:text-white sm:inline-flex"
           >
-            <DiscordIcon className="h-4 w-4" />
-            Join Discord
+            Discord
           </a>
+          <Link
+            to="/login"
+            className="hidden items-center gap-2 rounded-lg bg-amber-400 px-4 py-2.5 text-sm font-bold text-zinc-950 transition-all hover:bg-amber-300 sm:inline-flex"
+          >
+            {ORG_ABBR} Panel
+          </Link>
           <button
             onClick={() => setOpen((v) => !v)}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900/60 text-zinc-200 md:hidden"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-zinc-200 md:hidden"
             aria-label="Toggle menu"
           >
             {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -86,28 +84,44 @@ export default function Navbar() {
       </nav>
 
       {open && (
-        <div className="md:hidden border-t border-zinc-800/80 bg-zinc-950/95 backdrop-blur-xl">
+        <div className="md:hidden border-t border-white/10 bg-[#0a0f1c]">
           <ul className="space-y-1 px-5 py-4">
             {links.map((l) => (
-              <li key={l.href}>
-                <a
-                  href={l.href}
+              <li key={l.to}>
+                <NavLink
+                  to={l.to}
+                  end={l.to === '/'}
                   onClick={() => setOpen(false)}
-                  className="block rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-300 hover:bg-zinc-800/60 hover:text-white"
+                  className={({ isActive }) =>
+                    `block rounded-lg px-3 py-2.5 text-sm font-medium ${
+                      isActive
+                        ? 'bg-white/10 text-white'
+                        : 'text-zinc-300 hover:bg-white/5 hover:text-white'
+                    }`
+                  }
                 >
                   {l.label}
-                </a>
+                </NavLink>
               </li>
             ))}
+            <li>
+              <Link
+                to="/login"
+                onClick={() => setOpen(false)}
+                className="mt-2 flex items-center justify-center gap-2 rounded-lg bg-amber-400 px-4 py-3 text-sm font-bold text-zinc-950"
+              >
+                {ORG_ABBR} Panel
+              </Link>
+            </li>
             <li>
               <a
                 href={DISCORD_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-2 flex items-center justify-center gap-2 rounded-lg bg-[#5865F2] px-4 py-3 text-sm font-semibold text-white"
+                onClick={() => setOpen(false)}
+                className="block rounded-lg px-3 py-2.5 text-center text-sm font-medium text-zinc-300 hover:bg-white/5 hover:text-white"
               >
-                <DiscordIcon className="h-4 w-4" />
-                Join Discord
+                Discord
               </a>
             </li>
           </ul>
