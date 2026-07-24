@@ -42,6 +42,27 @@ export default function LeaveOfAbsence() {
       setError(insertErr.message);
       return;
     }
+    try {
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-loa`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            discordUsername: profile.discord_username ?? '',
+            startDate,
+            endDate,
+            reason,
+            orgAbbr: 'CSO',
+          }),
+        }
+      );
+    } catch {
+      // silent - Discord notification is best-effort
+    }
     setStartDate('');
     setEndDate('');
     setReason('');
