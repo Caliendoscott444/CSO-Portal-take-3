@@ -8,6 +8,8 @@ export default function LeaveOfAbsence() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [reason, setReason] = useState('');
+  const [commanders, setCommanders] = useState<{ id: string; discord_id: string | null; discord_username: string | null; member_rank: string | null }[]>([]);
+  const [commanderId, setCommanderId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,8 +23,22 @@ export default function LeaveOfAbsence() {
     setRequests(data ?? []);
   };
 
+  const loadCommanders = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, discord_id, discord_username, member_rank')
+      .in('member_rank', [
+        'Grand Commander',
+        'Operations Commander',
+        'Support and Logistics Commander',
+        'Capital Division Commander',
+      ]);
+    setCommanders(data ?? []);
+  };
+
   useEffect(() => {
     load();
+    loadCommanders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
 
@@ -42,6 +58,7 @@ export default function LeaveOfAbsence() {
       setError(insertErr.message);
       return;
     }
+    const selectedCommander = commanders.find((c) => c.id === commanderId);
     try {
       await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-loa`,
@@ -57,12 +74,15 @@ export default function LeaveOfAbsence() {
             endDate,
             reason,
             orgAbbr: 'CSO',
+            commanderDiscordId: selectedCommander?.discord_id ?? '',
+            commanderName: selectedCommander?.discord_username ?? '',
           }),
         }
       );
     } catch {
       // silent - Discord notification is best-effort
     }
+    setCommanderId('');
     setStartDate('');
     setEndDate('');
     setReason('');
@@ -107,6 +127,24 @@ export default function LeaveOfAbsence() {
               className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none"
             />
           </div>
+        </div>
+        <div>
+          <label className="text-sm font-semibold text-white">Commander</label>
+          <select
+            required
+            value={commanderId}
+            onChange={(e) => setCommanderId(e.target.value)}
+            className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none"
+          >
+            <option value="" disabled>
+              Select a commander...
+            </option>
+            {commanders.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.discord_username ?? 'Unknown'} ({c.member_rank})
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="text-sm font-semibold text-white">Reason</label>
