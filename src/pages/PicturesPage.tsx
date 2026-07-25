@@ -66,6 +66,7 @@ export default function PicturesPage() {
         eyebrow="Media Gallery"
         title="Pictures"
         subtitle="Browse official CSO media, featured operation images, community photos, recruitment scenes, and division highlights."
+        tags={['Official Media', 'Community Photos', 'Featured Ops']}
       />
 
       <section className="mx-auto max-w-7xl px-5 py-14 lg:px-8">

@@ -9,6 +9,7 @@ export default function CommandPage() {
         eyebrow="Department Structure"
         title="Command Staff"
         subtitle="The chain of authority that directs every operation, enforces discipline, and sets the strategic direction of the corporation."
+        tags={['3 Commanders', 'Chain of Authority', 'Discipline & Direction']}
       />
       <Command />
     </>

@@ -9,6 +9,7 @@ export default function AboutPage() {
         eyebrow="About CSO"
         title="About"
         subtitle="Who we are, what we do, and the standards every member is held to."
+        tags={['Est. Standards', 'Professional Corps', 'ERLC Roleplay']}
       />
       <About />
     </>

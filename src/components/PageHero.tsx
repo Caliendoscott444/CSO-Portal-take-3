@@ -11,67 +11,56 @@ export type PageHeroTheme =
 
 const themeConfig: Record<
   PageHeroTheme,
-  { accent: string; glow: string; texture: React.CSSProperties }
+  { text: string; border: string; bg: string; glow: string; stripe: string }
 > = {
   ops: {
-    accent: 'text-amber-400',
-    glow: 'rgba(217,119,6,0.14)',
-    texture: {
-      backgroundImage:
-        'repeating-linear-gradient(-45deg, #f5b942 0px, #f5b942 3px, transparent 3px, transparent 14px)',
-    },
+    text: 'text-amber-400',
+    border: 'border-amber-500/40',
+    bg: 'bg-amber-500/10',
+    glow: 'rgba(217,119,6,0.10)',
+    stripe: '#f5b942',
   },
   personnel: {
-    accent: 'text-sky-400',
-    glow: 'rgba(56,189,248,0.14)',
-    texture: {
-      backgroundImage:
-        'radial-gradient(circle, #38bdf8 1px, transparent 1px)',
-      backgroundSize: '18px 18px',
-    },
+    text: 'text-sky-400',
+    border: 'border-sky-500/40',
+    bg: 'bg-sky-500/10',
+    glow: 'rgba(56,189,248,0.10)',
+    stripe: '#38bdf8',
   },
   command: {
-    accent: 'text-amber-400',
-    glow: 'rgba(217,119,6,0.14)',
-    texture: {
-      backgroundImage:
-        'repeating-linear-gradient(0deg, #f5b942 0px, #f5b942 2px, transparent 2px, transparent 16px)',
-    },
+    text: 'text-amber-400',
+    border: 'border-amber-500/40',
+    bg: 'bg-amber-500/10',
+    glow: 'rgba(217,119,6,0.10)',
+    stripe: '#f5b942',
   },
   partners: {
-    accent: 'text-emerald-400',
-    glow: 'rgba(52,211,153,0.14)',
-    texture: {
-      backgroundImage:
-        'linear-gradient(30deg, #34d399 12%, transparent 12.5%, transparent 87%, #34d399 87.5%, #34d399), linear-gradient(150deg, #34d399 12%, transparent 12.5%, transparent 87%, #34d399 87.5%, #34d399)',
-      backgroundSize: '28px 48px',
-    },
+    text: 'text-emerald-400',
+    border: 'border-emerald-500/40',
+    bg: 'bg-emerald-500/10',
+    glow: 'rgba(52,211,153,0.10)',
+    stripe: '#34d399',
   },
   media: {
-    accent: 'text-fuchsia-400',
-    glow: 'rgba(232,121,249,0.14)',
-    texture: {
-      backgroundImage:
-        'radial-gradient(circle, #e879f9 1px, transparent 1px)',
-      backgroundSize: '10px 10px',
-    },
+    text: 'text-fuchsia-400',
+    border: 'border-fuchsia-500/40',
+    bg: 'bg-fuchsia-500/10',
+    glow: 'rgba(232,121,249,0.10)',
+    stripe: '#e879f9',
   },
   comms: {
-    accent: 'text-teal-400',
-    glow: 'rgba(45,212,191,0.14)',
-    texture: {
-      backgroundImage:
-        'repeating-radial-gradient(circle at 100% 50%, transparent 0, transparent 12px, rgba(45,212,191,0.5) 13px)',
-    },
+    text: 'text-teal-400',
+    border: 'border-teal-500/40',
+    bg: 'bg-teal-500/10',
+    glow: 'rgba(45,212,191,0.10)',
+    stripe: '#2dd4bf',
   },
   about: {
-    accent: 'text-amber-400',
-    glow: 'rgba(217,119,6,0.14)',
-    texture: {
-      backgroundImage:
-        'radial-gradient(circle at 50% 120%, transparent 0%, transparent 30%, #f5b942 30.5%, #f5b942 31%, transparent 31.5%, transparent 45%, #f5b942 45.5%, #f5b942 46%, transparent 46.5%)',
-      backgroundSize: '200px 200px',
-    },
+    text: 'text-amber-400',
+    border: 'border-amber-500/40',
+    bg: 'bg-amber-500/10',
+    glow: 'rgba(217,119,6,0.10)',
+    stripe: '#f5b942',
   },
 };
 
@@ -79,56 +68,79 @@ export default function PageHero({
   eyebrow,
   title,
   subtitle,
+  tags,
   children,
   theme = 'ops',
 }: {
   eyebrow: string;
   title: string;
   subtitle?: string;
+  tags?: string[];
   children?: ReactNode;
   theme?: PageHeroTheme;
 }) {
   const t = themeConfig[theme];
 
   return (
-    <section className="relative overflow-hidden border-b border-zinc-900/80 pt-32 pb-14 lg:pt-40 lg:pb-16">
-      <div className="absolute inset-0 bg-grid opacity-40" />
+    <section className="relative overflow-hidden border-b border-zinc-900/80 pt-32 pb-0 lg:pt-40">
+      <div className="absolute inset-0 bg-grid opacity-30" />
       <div
-        className="absolute -top-24 left-0 h-64 w-[32rem] rounded-full blur-3xl"
+        className="absolute -top-24 right-0 h-72 w-[32rem] rounded-full blur-3xl"
         style={{ background: t.glow }}
         aria-hidden="true"
       />
-      {/* per-page texture motif, right edge */}
-      <div
-        className="pointer-events-none absolute inset-y-0 right-0 w-40 opacity-[0.06] lg:w-56"
-        style={t.texture}
-        aria-hidden="true"
-      />
-      <div className="relative mx-auto max-w-7xl px-5 lg:px-8">
+      <div className="relative mx-auto max-w-7xl px-5 pb-16 lg:px-8 lg:pb-20">
         <div className="flex items-center gap-2">
-          <span className={t.accent} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+          <span className={t.text} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
             &gt;&gt;&gt;
           </span>
           <span
-            className={`text-xs font-bold uppercase tracking-[0.22em] ${t.accent}`}
+            className={`text-xs font-bold uppercase tracking-[0.22em] ${t.text}`}
             style={{ fontFamily: "'JetBrains Mono', monospace" }}
           >
             {eyebrow}
           </span>
+          <span className={`h-1.5 w-1.5 rounded-full animate-pulse-glow ${t.bg.replace('/10', '')}`} />
         </div>
+
         <h1
-          className="mt-3 max-w-3xl text-balance text-5xl leading-[0.95] tracking-wide text-white sm:text-6xl lg:text-7xl"
+          className="mt-4 max-w-3xl text-balance text-6xl leading-[0.95] tracking-wide text-white sm:text-7xl lg:text-8xl"
           style={{ fontFamily: "'Bebas Neue', sans-serif" }}
         >
           {title}
         </h1>
+
         {subtitle && (
           <p className="mt-4 max-w-2xl text-balance text-base leading-relaxed text-zinc-400 sm:text-lg">
             {subtitle}
           </p>
         )}
+
+        {tags && tags.length > 0 && (
+          <div className="mt-6 flex flex-wrap gap-2">
+            {tags.map((tag) => (
+              <span
+                key={tag}
+                className={`rounded border ${t.border} ${t.bg} px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${t.text}`}
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
         {children}
       </div>
+
+      {/* full-width diagonal hazard-stripe divider — the Applications page signature */}
+      <div
+        className="relative h-2 w-full opacity-70"
+        style={{
+          backgroundImage: `repeating-linear-gradient(-60deg, ${t.stripe} 0px, ${t.stripe} 2px, transparent 2px, transparent 16px)`,
+        }}
+        aria-hidden="true"
+      />
     </section>
   );
 }

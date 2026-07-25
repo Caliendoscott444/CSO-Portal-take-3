@@ -73,6 +73,7 @@ export default function SuggestionsPage() {
         eyebrow="We're Listening"
         title="Suggestions"
         subtitle={`Have an idea to improve ${ORG_ABBR}? Submit it here and it goes straight to our staff team's Discord.`}
+        tags={['Direct to Staff', 'Reviewed Weekly', 'Your Voice Matters']}
       />
 
       <section className="mx-auto max-w-2xl px-5 py-14 lg:px-8">

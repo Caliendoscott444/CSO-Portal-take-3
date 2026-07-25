@@ -39,6 +39,7 @@ export default function PersonnelPage() {
         eyebrow="Live Personnel Database"
         title="Personnel Roster"
         subtitle="Current callsigns, ranks, and division assignments of active CSO personnel."
+        tags={['Live Roster', 'Real-Time Status', 'All Divisions']}
       />
 
       <section className="relative py-16 lg:py-20">
