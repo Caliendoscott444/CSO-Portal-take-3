@@ -12,7 +12,6 @@ const links = [
   { to: '/partners', label: 'Partners' },
   { to: '/pictures', label: 'Pictures' },
   { to: '/suggestions', label: 'Suggestions' },
-    { to: '/personnel-suggestions', label: 'Personnel Suggestions' },
   { to: '/about', label: 'About' },
 ];
 
