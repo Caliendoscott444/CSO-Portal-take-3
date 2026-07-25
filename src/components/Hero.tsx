@@ -15,7 +15,7 @@ export default function Hero() {
             <img
               src="/CSO_CORPORATION_LOGO_1-2.png"
               alt={`${ORG_ABBR} Logo`}
-              className="h-16 w-16 object-contain brightness-0 invert opacity-95 sm:h-20 sm:w-20"
+              className="h-16 w-16 object-contain opacity-95 sm:h-20 sm:w-20"
             />
           </div>
 
