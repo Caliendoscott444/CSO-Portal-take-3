@@ -12,7 +12,6 @@ const links = [
   { to: '/partners', label: 'Partners' },
   { to: '/pictures', label: 'Pictures' },
   { to: '/suggestions', label: 'Suggestions' },
-    { to: '/personnel-suggestions', label: 'Personnel Suggestions' },
   { to: '/about', label: 'About' },
 ];
 
@@ -44,13 +43,7 @@ export default function Navbar() {
               <NavLink
                 to={l.to}
                 end={l.to === '/'}
-                className={({ isActive }) =>
-                  `rounded-full px-3.5 py-1.5 text-sm font-semibold transition-colors ${
-                    isActive
-                      ? 'bg-white text-zinc-950'
-                      : 'text-zinc-300 hover:text-white'
-                  }`
-                }
+                className="rounded-full bg-white px-3.5 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-100"
               >
                 {l.label}
               </NavLink>
