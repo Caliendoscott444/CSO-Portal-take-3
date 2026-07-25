@@ -127,13 +127,6 @@ export type Business = {
 
 export const businesses: Business[] = [
   {
-    name: 'Saber',
-    type: 'Business inside of CSO',
-    description:
-      'SABER is a department strictly based on tactical operations. Operations such as hostage rescue, and more. SABER works with LEO during scenes they cannot normally handle.',
-    icon: 'Swords',
-  },
-  {
     name: 'Family Jewels',
     type: 'Business inside of CSO',
     description:
