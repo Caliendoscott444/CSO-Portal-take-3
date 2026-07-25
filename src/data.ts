@@ -1,4 +1,4 @@
-export const DISCORD_URL = 'https://discord.gg/98yGAUma';
+export const DISCORD_URL = 'https://discord.gg/ZwHYjesC';
 
 export const ORG_NAME = 'Comet Strategic Operations Corporation';
 export const ORG_SHORT = 'C.O.M.E.T.';
@@ -61,11 +61,9 @@ export const divisions: Division[] = [
     description:
       'CSO\'s most specialized division. The Capital Division fields capabilities most organizations simply do not have — Aviation, Medical, Contracting, and Reconnaissance — making it the most versatile and sought-after arm of the corporation.',
     responsibilities: [
-      
       'Contract acquisition & partnership',
       'Forward reconnaissance, surveillance',
-      'Protect the ground with the ground units in Recon'
-      
+      'Protect the ground with the ground units in Recon',
     ],
     accent: 'sky',
     icon: 'Radar',
@@ -135,6 +133,13 @@ export const businesses: Business[] = [
       'SABER is a department strictly based on tactical operations. Operations such as hostage rescue, and more. SABER works with LEO during scenes they cannot normally handle.',
     icon: 'Swords',
   },
+  {
+    name: 'Family Jewels',
+    type: 'Business inside of CSO',
+    description:
+      "River City's premier jewelry business, offering a professional retail and security-focused roleplay experience. Partnered with CSO Security, Family Jewels combines realistic business operations with an active, welcoming community — offering opportunities in sales, security, and leadership. \"Where professionalism meets priceless roleplay.\"",
+    icon: 'Gem',
+  },
 ];
 
 export type Stat = { value: string; label: string };
@@ -145,3 +150,82 @@ export const stats: Stat[] = [
   { value: '3', label: 'Commanders' },
   { value: '22+', label: 'Active Personnel' },
 ];
+
+// ---------------------------------------------------------------------------
+// Personnel roster — shown on the public "Personnel" page (/personnel).
+// This is a manually-maintained list, separate from the private member
+// portal roster. Add/update entries here as personnel join, rank up, or
+// leave. Division must match one of: 'CSO Command', 'Operations Division',
+// 'Support & Logistics Division', 'Capital Division'.
+// ---------------------------------------------------------------------------
+export type PersonnelStatus = 'Active' | 'Leave of Absence' | 'Inactive';
+
+export type PersonnelMember = {
+  callsign: string;
+  name: string;
+  rank: string;
+  division: string;
+  status: PersonnelStatus;
+};
+
+export const personnelDivisions = [
+  'All divisions',
+  'CSO Command',
+  'Operations Division',
+  'Support & Logistics Division',
+  'Capital Division',
+] as const;
+
+export const personnelRoster: PersonnelMember[] = [
+  {
+    callsign: 'GCR-01',
+    name: 'A_BlueCrow126',
+    rank: 'Grand Commander',
+    division: 'CSO Command',
+    status: 'Active',
+  },
+  {
+    callsign: 'COD-01',
+    name: 'orcaumschlag12',
+    rank: 'Operations Commander',
+    division: 'Operations Division',
+    status: 'Active',
+  },
+  {
+    callsign: 'CCD-01',
+    name: 'yKWelTRcxOl',
+    rank: 'Capital Commander',
+    division: 'Capital Division',
+    status: 'Active',
+  },
+];
+
+export type PhotoCategory =
+  | 'Patrol'
+  | 'Community'
+  | 'Subdivisions'
+  | 'Recruitment'
+  | 'Official Media';
+
+export type Photo = {
+  id: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+  category: PhotoCategory;
+  location?: string;
+  date?: string;
+  photographer?: string;
+  featured?: boolean;
+};
+
+export const photoCategories: PhotoCategory[] = [
+  'Patrol',
+  'Community',
+  'Subdivisions',
+  'Recruitment',
+  'Official Media',
+];
+
+// No photos yet — add entries here (or wire this up to Supabase) as they come in.
+export const photos: Photo[] = [];
