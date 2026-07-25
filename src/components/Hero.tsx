@@ -1,93 +1,95 @@
-import { ArrowRight, ChevronDown } from 'lucide-react';
-import { DISCORD_URL, stats, ORG_ABBR } from '../data';
-import { DiscordIcon } from './Navbar';
+import { ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ORG_NAME, ORG_ABBR } from '../data';
 
 export default function Hero() {
   return (
-    <section id="home" className="relative overflow-hidden pt-32 pb-20 lg:pt-44 lg:pb-28">
-      <div className="absolute inset-0 bg-grid opacity-50" />
-      <div className="absolute inset-0" style={{ background: 'radial-gradient(60% 60% at 50% 0%, rgba(217,119,6,0.12) 0%, transparent 70%)' }} />
-      <div className="absolute -top-32 left-1/2 h-72 w-[40rem] -translate-x-1/2 rounded-full bg-amber-600/15 blur-3xl animate-pulse-glow" />
+    <section className="relative overflow-hidden bg-[#0a0f1c] pt-40 pb-24 lg:pt-48 lg:pb-32">
+      {/* ambient glow */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(50% 60% at 20% 10%, rgba(217,119,6,0.10) 0%, transparent 70%)',
+        }}
+      />
+      {/* diagonal hazard-stripe texture, right edge — matches Applications page language */}
+      <div
+        className="pointer-events-none absolute inset-y-0 right-0 w-32 opacity-[0.07] lg:w-48"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(-45deg, #f5b942 0px, #f5b942 3px, transparent 3px, transparent 14px)',
+        }}
+      />
 
-      <div className="relative mx-auto max-w-7xl px-5 lg:px-8">
-        <div className="mx-auto max-w-3xl text-center">
-          <div className="animate-fade-up inline-flex items-center gap-3">
-            <img
-              src="/CSO_CORPORATION_LOGO_1-2.png"
-              alt={`${ORG_ABBR} Logo`}
-              className="h-16 w-16 object-contain opacity-95 sm:h-20 sm:w-20"
-            />
+      <div className="relative mx-auto grid max-w-7xl grid-cols-1 items-center gap-16 px-5 lg:grid-cols-2 lg:px-8">
+        {/* Left column — copy */}
+        <div className="animate-fade-up">
+          <div className="flex items-center gap-2">
+            <span className="text-amber-400" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+              &gt;&gt;&gt;
+            </span>
+            <span
+              className="text-xs font-bold uppercase tracking-[0.2em] text-amber-400"
+              style={{ fontFamily: "'JetBrains Mono', monospace" }}
+            >
+              Roblox ER:LC Roleplay
+            </span>
           </div>
 
           <h1
-            className="animate-fade-up mt-6 text-balance text-4xl font-black leading-[1.04] tracking-tight text-white sm:text-5xl lg:text-6xl xl:text-7xl"
-            style={{ animationDelay: '60ms' }}
+            className="mt-4 text-balance text-6xl leading-[0.95] tracking-wide text-white sm:text-7xl lg:text-8xl"
+            style={{ fontFamily: "'Bebas Neue', sans-serif" }}
           >
             Comet Strategic
-            <span className="block bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 bg-clip-text text-transparent">
-              Operations
-            </span>
-            Corporation
+            <span className="block text-amber-400">Operations</span>
           </h1>
 
-          <p
-            className="animate-fade-up mx-auto mt-6 max-w-2xl text-balance text-base leading-relaxed text-zinc-300 sm:text-lg"
-            style={{ animationDelay: '120ms' }}
-          >
-            A professional and organized corporation built for protecting partnered
-            server VIPs, military combat training, and armed protection. Three elite
-            divisions. One mission.
+          <p className="mt-6 max-w-xl text-balance text-base leading-relaxed text-zinc-300 sm:text-lg">
+            A professional and organized corporation built for protecting
+            partnered server VIPs, military combat training, and armed
+            protection. Three elite divisions. One mission.
           </p>
 
-          <div
-            className="animate-fade-up mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row"
-            style={{ animationDelay: '180ms' }}
-          >
-            <a
-              href={DISCORD_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group inline-flex w-full items-center justify-center gap-2.5 rounded-xl bg-[#5865F2] px-7 py-4 text-base font-semibold text-white shadow-xl shadow-indigo-600/30 transition-all hover:bg-[#4752c4] hover:-translate-y-0.5 hover:shadow-indigo-600/50 sm:w-auto"
+          <div className="mt-9 flex flex-wrap items-center gap-4">
+            <Link
+              to="/login"
+              className="group relative -rotate-1 inline-flex items-center gap-2 border-2 border-amber-400 bg-amber-400 px-7 py-4 text-base font-bold text-zinc-950 shadow-lg shadow-amber-500/20 transition-all hover:rotate-0 hover:bg-amber-300"
+              style={{ fontFamily: "'Bebas Neue', sans-serif" }}
             >
-              <DiscordIcon className="h-5 w-5" />
-              Join Our Discord
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </a>
-            <a
-              href="#divisions"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900/40 px-7 py-4 text-base font-semibold text-zinc-100 backdrop-blur transition-colors hover:border-zinc-500 hover:bg-zinc-800/60 sm:w-auto"
-            >
-              Explore Divisions
-            </a>
+              <span className="text-lg tracking-widest">Open {ORG_ABBR} Panel</span>
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+
+            <div className="flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse-glow" />
+              <span
+                className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-400"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                Recruitment Active
+              </span>
+            </div>
           </div>
         </div>
 
-        <div
-          className="animate-fade-up mx-auto mt-16 grid max-w-4xl grid-cols-2 gap-4 sm:grid-cols-4"
-          style={{ animationDelay: '240ms' }}
-        >
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 px-5 py-6 text-center backdrop-blur transition-colors hover:border-amber-500/30"
-            >
-              <div className="bg-gradient-to-b from-amber-300 to-amber-600 bg-clip-text text-3xl font-black text-transparent sm:text-4xl">
-                {s.value}
-              </div>
-              <div className="mt-1.5 text-xs uppercase tracking-[0.14em] text-zinc-400">
-                {s.label}
-              </div>
+        {/* Right column — badge */}
+        <div className="animate-fade-up flex justify-center lg:justify-end" style={{ animationDelay: '120ms' }}>
+          <div className="relative">
+            {/* corner brackets, tactical HUD framing */}
+            <div className="pointer-events-none absolute -inset-6 hidden sm:block">
+              <div className="absolute left-0 top-0 h-8 w-8 border-l-2 border-t-2 border-amber-400/40" />
+              <div className="absolute right-0 top-0 h-8 w-8 border-r-2 border-t-2 border-amber-400/40" />
+              <div className="absolute bottom-0 left-0 h-8 w-8 border-b-2 border-l-2 border-amber-400/40" />
+              <div className="absolute bottom-0 right-0 h-8 w-8 border-b-2 border-r-2 border-amber-400/40" />
             </div>
-          ))}
+            <img
+              src="/CSO_CORPORATION_LOGO_1-2.png"
+              alt={`${ORG_NAME} Crest`}
+              className="h-64 w-64 object-contain drop-shadow-[0_0_60px_rgba(217,119,6,0.25)] sm:h-80 sm:w-80 lg:h-96 lg:w-96"
+            />
+          </div>
         </div>
-
-        <a
-          href="#divisions"
-          className="mt-14 flex items-center justify-center text-zinc-500 transition-colors hover:text-zinc-300"
-          aria-label="Scroll to divisions"
-        >
-          <ChevronDown className="h-6 w-6 animate-bounce" />
-        </a>
       </div>
     </section>
   );
