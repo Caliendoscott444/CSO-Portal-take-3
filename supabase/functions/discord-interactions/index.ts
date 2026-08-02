@@ -48,6 +48,7 @@ const MOD_ACTION_LOG_CHANNEL_ID = "1467558237111849182";
 // Role reused to gate who can click Accept/Deny/Check AI on a submitted /apply application.
 const APPLICATION_REVIEW_ROLE_ID = APPLY_ALLOWED_ROLE_ID;
 const APPLICATION_LOG_CHANNEL_ID = "1462506005538668654";
+const APPLICATION_AI_CHECK_LOG_CHANNEL_ID = "1532302856248627230";
 // On Accept: this role is added...
 const APPLICATION_ACCEPT_ADD_ROLE_ID = "1467421508803629129";
 // ...and this role is removed (no-op if the member doesn't have it).
@@ -3117,7 +3118,7 @@ if (commandName === "feedback") {
         footer: { text: `Checked by ${discordUserId ? `<@${discordUserId}>` : "unknown"}` },
       };
 
-      await discordApi(`/channels/${APPLICATION_LOG_CHANNEL_ID}/messages`, {
+      await discordApi(`/channels/${APPLICATION_AI_CHECK_LOG_CHANNEL_ID}/messages`, {
         method: "POST",
         body: JSON.stringify({ embeds: [checkEmbed] }),
       });
