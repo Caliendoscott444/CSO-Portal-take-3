@@ -45,6 +45,13 @@ const CHAIN_OF_COMMAND_CHANNEL_ID = "1462510709647610039";
 // Role allowed to use /ban, /kick, /warn, /timeout, /cases, /edit_case, and /view_cases.
 const MOD_ACTION_ROLE_ID = "1517739789816828024";
 const MOD_ACTION_LOG_CHANNEL_ID = "1467558237111849182";
+// Role reused to gate who can click Accept/Deny/Check AI on a submitted /apply application.
+const APPLICATION_REVIEW_ROLE_ID = APPLY_ALLOWED_ROLE_ID;
+const APPLICATION_LOG_CHANNEL_ID = "1462506005538668654";
+// On Accept: this role is added...
+const APPLICATION_ACCEPT_ADD_ROLE_ID = "1467421508803629129";
+// ...and this role is removed (no-op if the member doesn't have it).
+const APPLICATION_ACCEPT_REMOVE_ROLE_ID = "1467674380023894111";
 // TODO: set this to the server's exact display name/branding as it should appear in DMs to
 // members, e.g. "\u2728 | Comet Strategic Operations Corporation\u2122" \u2014 copy the exact text/emoji/symbol.
 const SERVER_NAME = "\u2728 | Comet Strategic Operations Corporation";
@@ -844,6 +851,7 @@ Deno.serve(async (req) => {
   const FEEDBACK_CHANNEL_ID = Deno.env.get("FEEDBACK_CHANNEL_ID")!;
   const APPLICATIONS_CHANNEL_ID = Deno.env.get("APPLICATIONS_CHANNEL_ID")!;
   const LOG_CHANNEL_ID = Deno.env.get("LOG_CHANNEL_ID")!;
+  const SAPLING_API_KEY = Deno.env.get("SAPLING_API_KEY")!;
   const APPEAL_CHANNEL_ID = "1462468083905204330";
   const APPEAL_CLOSE_LOG_CHANNEL_ID = "1462489107883364465";
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -2942,6 +2950,180 @@ if (commandName === "feedback") {
 
       return new Response(
         JSON.stringify({ type: 7, data: { components: disabledComponents } }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // --- Application review: Accept / Deny ---
+    if (customId.startsWith("app_accept:") || customId.startsWith("app_deny:")) {
+      const accept = customId.startsWith("app_accept:");
+      const submissionId = customId.split(":")[1];
+
+      if (!memberRoles.includes(APPLICATION_REVIEW_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to review applications.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: submissionRow } = await supabase
+        .from("application_submissions")
+        .select("*")
+        .eq("id", submissionId)
+        .maybeSingle();
+
+      if (!submissionRow) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This application no longer exists.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (accept) {
+        try {
+          await discordApi(
+            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}/roles/${APPLICATION_ACCEPT_ADD_ROLE_ID}`,
+            { method: "PUT" },
+          );
+        } catch {
+          // best-effort
+        }
+        try {
+          await discordApi(
+            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}/roles/${APPLICATION_ACCEPT_REMOVE_ROLE_ID}`,
+            { method: "DELETE" },
+          );
+        } catch {
+          // best-effort — no-op if they don't have the role
+        }
+      }
+
+      const disabledComponents = (body.message?.components ?? []).map((row: any) => ({
+        ...row,
+        components: row.components.map((c: any) => ({ ...c, disabled: true })),
+      }));
+
+      const resultEmbed = accept
+        ? {
+            title: "\u2705 Application Accepted",
+            description: `${submissionRow.discord_username}'s application was accepted by <@${discordUserId}>.`,
+            color: 0x22c55e,
+            footer: { text: `Submission ID: ${submissionRow.id}` },
+          }
+        : {
+            title: "\u274C Application Denied",
+            description: `${submissionRow.discord_username}'s application was denied by <@${discordUserId}>.`,
+            color: 0xed4245,
+            footer: { text: `Submission ID: ${submissionRow.id}` },
+          };
+
+      await discordApi(`/channels/${APPLICATION_LOG_CHANNEL_ID}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ embeds: [resultEmbed] }),
+      });
+
+      try {
+        await sendDM(submissionRow.discord_user_id, {
+          content: accept
+            ? "Congratulations! Your CSO application has been **accepted**."
+            : "Thank you for applying. Unfortunately your CSO application has been **denied**.",
+        });
+      } catch {
+        // best-effort
+      }
+
+      return new Response(
+        JSON.stringify({ type: 7, data: { components: disabledComponents } }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // --- Application review: Check AI ---
+    if (customId.startsWith("app_checkai:")) {
+      const submissionId = customId.split(":")[1];
+
+      if (!memberRoles.includes(APPLICATION_REVIEW_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to review applications.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: submissionRow } = await supabase
+        .from("application_submissions")
+        .select("*")
+        .eq("id", submissionId)
+        .maybeSingle();
+
+      if (!submissionRow) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This application no longer exists.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: answerRows } = await supabase
+        .from("application_answers")
+        .select("*")
+        .eq("submission_id", submissionId);
+
+      const answers: any[] = answerRows ?? [];
+
+      const results = await Promise.all(
+        answers.map(async (a: any) => {
+          const text: string = a.answer_text ?? "";
+          if (!text.trim()) {
+            return { question: a.question_text, score: null as number | null, error: false };
+          }
+          try {
+            const saplingRes = await fetch("https://api.sapling.ai/api/v1/aidetect", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ key: SAPLING_API_KEY, text }),
+            });
+            if (!saplingRes.ok) {
+              return { question: a.question_text, score: null as number | null, error: true };
+            }
+            const saplingData = await saplingRes.json();
+            const score: number | null = typeof saplingData.score === "number" ? saplingData.score : null;
+            return { question: a.question_text, score, error: false };
+          } catch {
+            return { question: a.question_text, score: null as number | null, error: true };
+          }
+        }),
+      );
+
+      const fields = results.map((r) => ({
+        name: r.question.slice(0, 256),
+        value: r.error
+          ? "Couldn't run AI detection for this answer."
+          : r.score === null
+          ? "No answer to check."
+          : `${Math.round(r.score * 100)}% likely AI-generated`,
+        inline: false,
+      }));
+
+      const checkEmbed = {
+        title: "\uD83E\uDD16 AI Detection Results",
+        description: `Checked ${submissionRow.discord_username}'s application (Submission ID: ${submissionRow.id}).`,
+        color: 0x5865f2,
+        fields,
+        footer: { text: `Checked by ${discordUserId ? `<@${discordUserId}>` : "unknown"}` },
+      };
+
+      await discordApi(`/channels/${APPLICATION_LOG_CHANNEL_ID}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ embeds: [checkEmbed] }),
+      });
+
+      return new Response(
+        JSON.stringify({ type: 4, data: { embeds: [checkEmbed], flags: 64 } }),
         { headers: { "Content-Type": "application/json" } },
       );
     }
