@@ -6,11 +6,14 @@ const navLinks = [
   { to: '/portal', label: 'Dashboard' },
   { to: '/portal/shifts', label: 'Start Shift' },
   { to: '/portal/loa', label: 'Leave of Absence' },
+  { to: '/portal/personnel-suggestions', label: 'Personnel Suggestions' },
 ];
 
 export default function PortalLayout({ children }: { children: ReactNode }) {
   const { profile, signOut } = useAuth();
   const location = useLocation();
+  const isStaff = profile?.access_level === 'staff' || profile?.access_level === 'command';
+  const links = isStaff ? [...navLinks, { to: '/portal/admin', label: 'Admin' }] : navLinks;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -20,7 +23,7 @@ export default function PortalLayout({ children }: { children: ReactNode }) {
             CSO Portal
           </Link>
           <nav className="flex flex-1 items-center gap-1">
-            {navLinks.map((l) => (
+            {links.map((l) => (
               <Link
                 key={l.to}
                 to={l.to}

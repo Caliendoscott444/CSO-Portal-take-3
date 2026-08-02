@@ -1,35 +1,19 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import {
   User,
   Radio,
   CalendarClock,
-  Bell,
   Users,
   Building2,
   FileText,
   Star,
-  BookOpen,
   Image as ImageIcon,
+  Trophy,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase, DisciplineRecord } from '../../lib/supabaseClient';
 import { StatCard, ToolCard, SectionHeading } from './cards';
-
-function isoWeekKey(d: Date): string {
-  const target = new Date(d.valueOf());
-  const dayNr = (d.getUTCDay() + 6) % 7;
-  target.setUTCDate(target.getUTCDate() - dayNr + 3);
-  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-  const week =
-    1 +
-    Math.round(
-      ((target.getTime() - firstThursday.getTime()) / 86400000 -
-        3 +
-        ((firstThursday.getUTCDay() + 6) % 7)) /
-        7,
-    );
-  return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
-}
+import { getPeriodKey, formatPeriodRange } from '../../lib/period';
 
 function formatMinutes(mins: number) {
   const h = Math.floor(mins / 60);
@@ -37,7 +21,7 @@ function formatMinutes(mins: number) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-const WEEKLY_REQUIREMENT_MINUTES = 60;
+const PERIOD_REQUIREMENT_MINUTES = 60;
 
 export default function Dashboard() {
   const { profile } = useAuth();
@@ -46,13 +30,13 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!profile) return;
-    const weekKey = isoWeekKey(new Date());
+    const periodKey = getPeriodKey(new Date());
 
     supabase
       .from('weekly_credit_v')
       .select('credited_minutes')
       .eq('user_id', profile.id)
-      .eq('week_key', weekKey)
+      .eq('week_key', periodKey)
       .maybeSingle()
       .then(({ data }) => setCreditedMinutes(data?.credited_minutes ?? 0));
 
@@ -66,8 +50,6 @@ export default function Dashboard() {
   }, [profile]);
 
   if (!profile) return null;
-
-  const weekKey = isoWeekKey(new Date());
 
   return (
     <div>
@@ -85,13 +67,13 @@ export default function Dashboard() {
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          label="Weekly Credited"
+          label="Period Credited"
           value={formatMinutes(creditedMinutes)}
-          caption={`${weekKey} · Requirement ${formatMinutes(WEEKLY_REQUIREMENT_MINUTES)}`}
+          caption={`${formatPeriodRange(new Date())} - Requirement ${formatMinutes(PERIOD_REQUIREMENT_MINUTES)}`}
         />
         <StatCard
           label="Discipline"
-          value={`${profile.warnings}W · ${profile.strikes}S`}
+          value={`${profile.infractions}I - ${profile.strikes}S - ${profile.firewarnings}FW`}
           caption={profile.strikes > 0 ? 'Active strikes on record' : 'No active suspensions'}
         />
         <StatCard
@@ -107,7 +89,7 @@ export default function Dashboard() {
       </div>
 
       <SectionHeading kicker="Member Tools" title="Your workspace" />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <ToolCard
           to="/portal/profile"
           icon={<User className="h-4.5 w-4.5" />}
@@ -130,11 +112,11 @@ export default function Dashboard() {
           description="Submit or review your LOA requests."
         />
         <ToolCard
-          to="/portal/notifications"
-          icon={<Bell className="h-4.5 w-4.5" />}
-          eyebrow="Updates"
-          title="Notifications"
-          description="View department updates, LOA notices, application decisions, and staff alerts."
+          to="/portal/leaderboard"
+          icon={<Trophy className="h-4.5 w-4.5" />}
+          eyebrow="Standings"
+          title="Leaderboard"
+          description="See who's leading in credited shift time for the current wave."
         />
       </div>
 
@@ -150,9 +132,9 @@ export default function Dashboard() {
         <ToolCard
           to="/portal/subdivisions"
           icon={<Building2 className="h-4.5 w-4.5" />}
-          eyebrow="Departments"
-          title="Subdivisions"
-          description="View CVE, MSPR, SRT, CID, OPS, FTO, STORM, Review Committee, and more."
+          eyebrow="Structure"
+          title="Units"
+          description="View C.O.M.E.T. Task Force, Contractor Unit, Reconnaissance Unit, and more."
         />
         <ToolCard
           to="/portal/applications"
@@ -164,14 +146,6 @@ export default function Dashboard() {
       </div>
 
       <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <ToolCard
-          href="/exam"
-          icon={<Star className="h-4.5 w-4.5" />}
-          eyebrow="Promotion"
-          title="Sergeant Exam"
-          description="Open the website-based Sergeant Promotional Exam after Department Administration grants access through /exam."
-          highlight
-        />
         <ToolCard
           to="/portal/ranks"
           icon={<Star className="h-4.5 w-4.5" />}
@@ -185,13 +159,6 @@ export default function Dashboard() {
           eyebrow="Media"
           title="Pictures"
           description="View featured photos, official media, gallery rotations, and approved submissions."
-        />
-        <ToolCard
-          href="https://cso-sop.gitbook.io"
-          icon={<BookOpen className="h-4.5 w-4.5" />}
-          eyebrow="Policy"
-          title="Standard Operating Procedures"
-          description="Open the official CSO SOP GitBook covering department policies, expectations, patrol procedures, and operating standards."
         />
       </div>
 
@@ -243,15 +210,21 @@ export default function Dashboard() {
             </div>
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-                Warnings
+                Infractions
               </p>
-              <p className="mt-1 text-lg font-bold text-white">{profile.warnings}</p>
+              <p className="mt-1 text-lg font-bold text-white">{profile.infractions}</p>
             </div>
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
                 Strikes
               </p>
               <p className="mt-1 text-lg font-bold text-white">{profile.strikes}</p>
+            </div>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
+                Firewarnings
+              </p>
+              <p className="mt-1 text-lg font-bold text-white">{profile.firewarnings}</p>
             </div>
           </div>
         </div>

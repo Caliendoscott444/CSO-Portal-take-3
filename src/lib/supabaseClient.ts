@@ -31,11 +31,13 @@ export type Profile = {
   discord_username: string | null;
   discord_avatar_url: string | null;
   callsign: string | null;
+  member_rank: string | null;
   access_level: string;
   current_assignment: string | null;
   loa_status: string;
   loa_reason: string | null;
-  warnings: number;
+  infractions: number;
+  firewarnings: number;
   strikes: number;
   is_active: boolean;
 };
@@ -77,7 +79,7 @@ export type LoaRequest = {
 export type DisciplineRecord = {
   id: string;
   user_id: string;
-  type: 'warning' | 'strike' | 'termination' | 'note';
+  type: 'infraction' | 'strike' | 'firewarning' | 'termination' | 'note';
   reason: string;
   created_at: string;
 };

@@ -1,5 +1,5 @@
 import { commanders } from '../data';
-import { SectionHeader } from './Departments';
+import SectionHeader from './SectionHeader';
 
 const accentMap: Record<string, { gradient: string; text: string; ring: string; badge: string }> = {
   amber: {
@@ -34,7 +34,7 @@ export default function Command() {
   );
 
   return (
-    <section id="command" className="relative py-24 lg:py-32 border-y border-zinc-900/80 bg-zinc-950/40">
+    <section className="relative py-24 lg:py-32">
       <div className="mx-auto max-w-7xl px-5 lg:px-8">
         <SectionHeader
           eyebrow="Command Staff"

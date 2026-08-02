@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { DISCORD_URL, ORG_ABBR, ORG_NAME } from '../data';
 import { DiscordIcon } from './Navbar';
 
@@ -30,10 +31,11 @@ export default function Footer() {
               Explore
             </h4>
             <ul className="mt-4 space-y-2 text-sm text-zinc-400">
-              <li><a href="#divisions" className="hover:text-white transition-colors">Divisions</a></li>
-              <li><a href="#command" className="hover:text-white transition-colors">Command Staff</a></li>
-              <li><a href="#partners" className="hover:text-white transition-colors">Partners</a></li>
-              <li><a href="#about" className="hover:text-white transition-colors">About Us</a></li>
+              <li><Link to="/divisions" className="hover:text-white transition-colors">Divisions</Link></li>
+              <li><Link to="/personnel" className="hover:text-white transition-colors">Personnel</Link></li>
+              <li><Link to="/command" className="hover:text-white transition-colors">Command Staff</Link></li>
+              <li><Link to="/partners" className="hover:text-white transition-colors">Partners</Link></li>
+              <li><Link to="/about" className="hover:text-white transition-colors">About Us</Link></li>
             </ul>
           </div>
 

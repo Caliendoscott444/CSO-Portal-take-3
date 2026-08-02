@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronDown, Search, ShieldAlert, Ban } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
@@ -130,6 +131,35 @@ type DisciplineRecordRow = {
   created_at: string;
 };
 
+// Rows from the Discord bot's `cases` table — created by /punish, updated by /revoke and /appeal.
+// user_id here is the Discord snowflake, NOT the profiles.id UUID — join via profiles.discord_id.
+type CaseRow = {
+  id: number;
+  guild_id: string;
+  user_id: string;
+  moderator_id: string;
+  reason: string;
+  duration_minutes: number | null;
+  created_at: string;
+  status: string;
+  appeal_status: string | null;
+  appeal_reason: string | null;
+  punishment_type: string;
+  appealable: boolean;
+  signed_by: string | null;
+  ticket_channel_id: string | null;
+};
+
+const CASE_TYPE_STYLES: Record<string, string> = {
+  Suspension: 'bg-red-500/10 text-red-400',
+  Warning: 'bg-yellow-500/10 text-yellow-400',
+  Termination: 'bg-zinc-700/60 text-zinc-300',
+};
+
+function caseTypeClass(type: string) {
+  return CASE_TYPE_STYLES[type] ?? 'bg-purple-500/10 text-purple-400';
+}
+
 // "Regular" / Default shift type — used for manually-added admin time blocks
 const DEFAULT_SHIFT_TYPE_ID = 'a9c5e432-2e59-4299-af67-5d9bf9e9018e';
 
@@ -158,6 +188,7 @@ export default function Admin() {
   const [captionDraft, setCaptionDraft] = useState('');
 
   const [disciplineRecords, setDisciplineRecords] = useState<DisciplineRecordRow[]>([]);
+  const [discordCases, setDiscordCases] = useState<CaseRow[]>([]);
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [editRecordDraft, setEditRecordDraft] = useState<{ type: string; reason: string }>({
     type: 'infraction',
@@ -222,6 +253,20 @@ export default function Admin() {
       console.error('Failed to load discipline records:', error.message);
     }
     setDisciplineRecords(data ?? []);
+  };
+
+  const loadDiscordCases = async () => {
+    const { data, error } = await supabase
+      .from('cases')
+      .select(
+        'id, guild_id, user_id, moderator_id, reason, duration_minutes, created_at, status, appeal_status, appeal_reason, punishment_type, appealable, signed_by, ticket_channel_id',
+      )
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) {
+      console.error('Failed to load Discord cases:', error.message);
+    }
+    setDiscordCases(data ?? []);
   };
 
   const loadActiveShifts = async () => {
@@ -331,6 +376,7 @@ export default function Admin() {
       load();
       loadPictures();
       loadDisciplineRecords();
+      loadDiscordCases();
       loadActiveShifts();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -671,6 +717,48 @@ export default function Admin() {
 
   const selectedWave = waves.find((w) => w.id === selectedWaveId);
 
+  type UnifiedRecord = {
+    key: string;
+    source: 'manual' | 'discord';
+    userId: string; // profile UUID
+    typeLabel: string;
+    reason: string;
+    created_at: string;
+    manualRecord?: DisciplineRecordRow;
+    caseRecord?: CaseRow;
+  };
+
+  const discordIdToProfileId = new Map(
+    members.filter((m) => m.discord_id).map((m) => [m.discord_id as string, m.id]),
+  );
+
+  const unifiedRecords: UnifiedRecord[] = [
+    ...disciplineRecords.map((r) => ({
+      key: `manual-${r.id}`,
+      source: 'manual' as const,
+      userId: r.user_id,
+      typeLabel: r.type,
+      reason: r.reason,
+      created_at: r.created_at,
+      manualRecord: r,
+    })),
+    ...discordCases
+      .map((c) => {
+        const profileId = discordIdToProfileId.get(c.user_id);
+        if (!profileId) return null;
+        return {
+          key: `discord-${c.id}`,
+          source: 'discord' as const,
+          userId: profileId,
+          typeLabel: c.punishment_type,
+          reason: c.reason,
+          created_at: c.created_at,
+          caseRecord: c,
+        };
+      })
+      .filter((r): r is UnifiedRecord => r !== null),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
   return (
     <div className="mx-auto max-w-4xl">
       <p className="text-xs font-bold uppercase tracking-widest text-amber-400">Staff</p>
@@ -678,6 +766,12 @@ export default function Admin() {
       <p className="mt-1 text-sm text-zinc-400">
         Manage member ranks, access, discipline, shift waves, and pending LOA requests.
       </p>
+      <Link
+        to="/portal/admin/subdivisions"
+        className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3.5 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-800"
+      >
+        Manage Sub-Divisions →
+      </Link>
 
       {loading ? (
         <p className="mt-6 text-sm text-zinc-500">Loading…</p>
@@ -902,17 +996,62 @@ export default function Admin() {
           </div>
 
           <p className="mb-3 mt-10 text-lg font-bold text-white">
-            Discipline Records {disciplineRecords.length > 0 && `(${disciplineRecords.length})`}
+            Discipline Records {unifiedRecords.length > 0 && `(${unifiedRecords.length})`}
           </p>
           <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/50">
-            {disciplineRecords.length === 0 && (
+            {unifiedRecords.length === 0 && (
               <p className="px-5 py-6 text-sm text-zinc-500">No discipline records yet.</p>
             )}
-            {disciplineRecords.map((r) => {
-              const member = members.find((m) => m.id === r.user_id);
+            {unifiedRecords.map((rec) => {
+              const member = members.find((m) => m.id === rec.userId);
+
+              if (rec.source === 'discord' && rec.caseRecord) {
+                const c = rec.caseRecord;
+                return (
+                  <div key={rec.key} className="px-5 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white">
+                          {member?.discord_username ?? 'Unknown member'}{' '}
+                          <span
+                            className={`ml-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${caseTypeClass(
+                              c.punishment_type,
+                            )}`}
+                          >
+                            {c.punishment_type}
+                          </span>
+                          <span className="ml-1 rounded-md bg-purple-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-400">
+                            via /punish
+                          </span>
+                          {c.status !== 'active' && (
+                            <span className="ml-1 rounded-md bg-zinc-700/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-400">
+                              {c.status}
+                            </span>
+                          )}
+                          {c.appeal_status && (
+                            <span className="ml-1 rounded-md bg-blue-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-400">
+                              Appeal: {c.appeal_status}
+                            </span>
+                          )}
+                        </p>
+                        <p className="mt-1 text-sm text-zinc-400">{c.reason}</p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {new Date(c.created_at).toLocaleString()}
+                          {c.duration_minutes ? ` · ${c.duration_minutes}m` : ''}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-[10px] italic text-zinc-600">
+                        Manage via Discord
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
+
+              const r = rec.manualRecord!;
               const isEditing = editingRecordId === r.id;
               return (
-                <div key={r.id} className="px-5 py-4">
+                <div key={rec.key} className="px-5 py-4">
                   {isEditing ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <select
@@ -1062,12 +1201,17 @@ export default function Admin() {
                 const totalSeconds = waveTotals[m.id] ?? 0;
                 const isExpanded = expandedMemberId === m.id;
                 const rankCount = m.member_ranks?.length ?? 0;
+                const memberCases = m.discord_id
+                  ? discordCases.filter((c) => c.user_id === m.discord_id)
+                  : [];
+                const activeCaseCount = memberCases.filter((c) => c.status === 'active').length;
                 const hasFlags =
                   m.infractions > 0 ||
                   m.strikes > 0 ||
                   m.firewarnings > 0 ||
                   m.loa_status !== 'clear' ||
-                  !m.is_active;
+                  !m.is_active ||
+                  activeCaseCount > 0;
 
                 return (
                   <div
@@ -1117,6 +1261,12 @@ export default function Admin() {
                             {m.firewarnings > 0 && (
                               <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 text-[10px] font-bold text-red-400">
                                 {m.firewarnings} firewarning{m.firewarnings === 1 ? '' : 's'}
+                              </span>
+                            )}
+                            {activeCaseCount > 0 && (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-bold text-purple-400">
+                                <ShieldAlert className="h-2.5 w-2.5" /> {activeCaseCount} Discord case
+                                {activeCaseCount === 1 ? '' : 's'}
                               </span>
                             )}
                             {m.loa_status !== 'clear' && (
@@ -1247,6 +1397,61 @@ export default function Admin() {
                             </div>
                           ))}
                         </div>
+
+                        <p className="mb-2 mt-5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                          Discord punishments {memberCases.length > 0 && `(${memberCases.length})`}
+                        </p>
+                        {!m.discord_id ? (
+                          <p className="text-xs text-zinc-500">
+                            No Discord ID on file for this member — can't match /punish cases.
+                          </p>
+                        ) : memberCases.length === 0 ? (
+                          <p className="text-xs text-zinc-500">No cases from /punish yet.</p>
+                        ) : (
+                          <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                            {memberCases.map((c) => (
+                              <div
+                                key={c.id}
+                                className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2"
+                              >
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span
+                                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${caseTypeClass(
+                                      c.punishment_type,
+                                    )}`}
+                                  >
+                                    {c.punishment_type}
+                                  </span>
+                                  <span
+                                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                                      c.status === 'active'
+                                        ? 'bg-red-500/10 text-red-400'
+                                        : 'bg-zinc-700/50 text-zinc-400'
+                                    }`}
+                                  >
+                                    {c.status}
+                                  </span>
+                                  {c.appeal_status && (
+                                    <span className="rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-bold text-blue-400">
+                                      Appeal: {c.appeal_status}
+                                    </span>
+                                  )}
+                                  <span className="ml-auto text-[10px] text-zinc-500">
+                                    {new Date(c.created_at).toLocaleDateString()}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs text-zinc-300">{c.reason}</p>
+                                <p className="mt-1 text-[10px] text-zinc-500">
+                                  Mod: {c.moderator_id}
+                                  {c.duration_minutes ? ` · ${c.duration_minutes}m` : ''}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-1 text-[10px] text-zinc-600">
+                          Managed via /punish, /revoke, and /appeal in Discord — read-only here.
+                        </p>
 
                         <p className="mb-2 mt-5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
                           Log discipline

@@ -57,6 +57,18 @@ Deno.serve(async (req) => {
     const roles = await getMemberRoles(profile.discord_id);
     const eligible = roles.includes(shiftType.required_role_id);
 
+    console.log('DEBUG', {
+  shift_type_key,
+  discord_id: profile?.discord_id,
+  required_role_id: shiftType.required_role_id,
+  roles_from_discord: roles,
+  guild_id_in_use: Deno.env.get('DISCORD_GUILD_ID'),
+});
+
+return json({
+  eligible,
+  reason: eligible ? undefined : 'Missing the required Discord role for this shift.',
+});
     return json({
       eligible,
       reason: eligible ? undefined : 'Missing the required Discord role for this shift.',

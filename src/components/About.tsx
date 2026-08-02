@@ -1,7 +1,7 @@
 import { Target, ShieldCheck, Users, Zap, ArrowRight } from 'lucide-react';
 import { DISCORD_URL, ORG_ABBR } from '../data';
 import { DiscordIcon } from './Navbar';
-import { SectionHeader } from './Departments';
+import SectionHeader from './SectionHeader';
 
 const pillars = [
   {
@@ -28,7 +28,7 @@ const pillars = [
 
 export default function About() {
   return (
-    <section id="about" className="relative py-24 lg:py-32 border-t border-zinc-900/80">
+    <section className="relative py-24 lg:py-32">
       <div className="mx-auto max-w-7xl px-5 lg:px-8">
         <SectionHeader
           eyebrow="About CSO"

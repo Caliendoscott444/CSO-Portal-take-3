@@ -1,4 +1,4 @@
-import {
+﻿import {
   createContext,
   useContext,
   useEffect,
@@ -13,6 +13,8 @@ type AuthContextValue = {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
+  portalAccess: boolean | null;
+  portalAccessReason: string | undefined;
   signInWithDiscord: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -24,6 +26,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [portalAccess, setPortalAccess] = useState<boolean | null>(null);
+  const [portalAccessReason, setPortalAccessReason] = useState<string | undefined>();
 
   const loadProfile = useCallback(async (userId: string) => {
     const { data } = await supabase
@@ -34,10 +38,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(data ?? null);
   }, []);
 
+  const checkPortalAccess = useCallback(async () => {
+    setPortalAccess(null);
+    const { data, error } = await supabase.functions.invoke('check-portal-access');
+    if (error) {
+      setPortalAccess(false);
+      setPortalAccessReason('Could not verify portal access. Please try again.');
+      return;
+    }
+    setPortalAccess(Boolean(data?.eligible));
+    setPortalAccessReason(data?.reason);
+  }, []);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      if (data.session?.user) loadProfile(data.session.user.id);
+      if (data.session?.user) {
+        loadProfile(data.session.user.id);
+        checkPortalAccess();
+      }
       setLoading(false);
     });
 
@@ -45,13 +64,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(newSession);
       if (newSession?.user) {
         loadProfile(newSession.user.id);
+        checkPortalAccess();
       } else {
         setProfile(null);
+        setPortalAccess(null);
+        setPortalAccessReason(undefined);
       }
     });
 
     return () => sub.subscription.unsubscribe();
-  }, [loadProfile]);
+  }, [loadProfile, checkPortalAccess]);
 
   const signInWithDiscord = async () => {
     await supabase.auth.signInWithOAuth({
@@ -70,7 +92,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ session, profile, loading, signInWithDiscord, signOut, refreshProfile }}
+      value={{
+        session,
+        profile,
+        loading,
+        portalAccess,
+        portalAccessReason,
+        signInWithDiscord,
+        signOut,
+        refreshProfile,
+      }}
     >
       {children}
     </AuthContext.Provider>

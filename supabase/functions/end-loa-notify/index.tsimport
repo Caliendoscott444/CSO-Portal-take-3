@@ -1,0 +1,59 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  try {
+    const WEBHOOK_URL = Deno.env.get("LOA_WEBHOOK_URL");
+
+    if (!WEBHOOK_URL) {
+      return new Response(
+        JSON.stringify({ error: "Missing LOA_WEBHOOK_URL" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { discordId, discordUsername } = await req.json();
+
+    const mention = discordId ? `<@${discordId}>` : discordUsername ? discordUsername : "Member";
+
+    const embed = {
+      title: "✅ LOA Ended",
+      description: `${mention}, your Leave of Absence has ended. Welcome back!`,
+      color: 0x22c55e,
+      timestamp: new Date().toISOString(),
+    };
+
+    const res = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: discordId ? mention : "", embeds: [embed] }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return new Response(
+        JSON.stringify({ error: "Discord webhook error", detail: errText }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: "Unexpected error", detail: String(err) }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});

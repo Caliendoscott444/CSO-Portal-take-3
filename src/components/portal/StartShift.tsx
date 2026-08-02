@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase, Shift, ShiftType } from '../../lib/supabaseClient';
+import { getPeriodKey, formatPeriodRange } from '../../lib/period';
 
 function formatMinutes(mins: number) {
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const totalSeconds = Math.round(mins * 60);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return `${h}h ${m}m ${s}s`;
+}
+
+function formatDuration(totalSeconds: number) {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
 async function callFunction(name: string, body: unknown) {
@@ -32,7 +43,7 @@ export default function StartShift() {
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [selectedKey, setSelectedKey] = useState('');
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
-  const [elapsedMinutes, setElapsedMinutes] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [weeklyWorked, setWeeklyWorked] = useState(0);
   const [weeklyCredited, setWeeklyCredited] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -56,15 +67,15 @@ export default function StartShift() {
       .maybeSingle();
     setActiveShift(active ?? null);
 
-    const weekKey = new Date().toISOString(); // recomputed server-side; view keys off shifts rows
-    const { data: weekly } = await supabase
+    const periodKey = getPeriodKey(new Date());
+    const { data: thisPeriod } = await supabase
       .from('weekly_credit_v')
-      .select('*')
-      .eq('user_id', profile.id);
-    const thisWeek = weekly?.[weekly.length - 1];
-    setWeeklyWorked(thisWeek?.worked_minutes ?? 0);
-    setWeeklyCredited(thisWeek?.credited_minutes ?? 0);
-    void weekKey;
+      .select('worked_minutes, credited_minutes')
+      .eq('user_id', profile.id)
+      .eq('week_key', periodKey)
+      .maybeSingle();
+    setWeeklyWorked(thisPeriod?.worked_minutes ?? 0);
+    setWeeklyCredited(thisPeriod?.credited_minutes ?? 0);
   };
 
   useEffect(() => {
@@ -76,10 +87,10 @@ export default function StartShift() {
     if (!activeShift) return;
     const tick = () => {
       const started = new Date(activeShift.started_at).getTime();
-      setElapsedMinutes(Math.floor((Date.now() - started) / 60000));
+      setElapsedSeconds(Math.floor((Date.now() - started) / 1000));
     };
     tick();
-    const id = setInterval(tick, 15000);
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [activeShift]);
 
@@ -164,7 +175,7 @@ export default function StartShift() {
               You are currently on an active shift. Elapsed time updates automatically.
             </p>
             <p className="mt-3 text-4xl font-black text-amber-400">
-              {formatMinutes(elapsedMinutes)}
+              {formatDuration(elapsedSeconds)}
             </p>
             <button
               onClick={handleEnd}
@@ -180,13 +191,13 @@ export default function StartShift() {
       <div className="mt-6 grid grid-cols-3 gap-4">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
           <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-            Worked This Week
+            Worked This Period
           </p>
           <p className="mt-1 text-lg font-bold text-white">{formatMinutes(weeklyWorked)}</p>
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
           <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-            Credited This Week
+            Credited This Period
           </p>
           <p className="mt-1 text-lg font-bold text-white">{formatMinutes(weeklyCredited)}</p>
         </div>
@@ -197,6 +208,7 @@ export default function StartShift() {
           <p className="mt-1 text-lg font-bold text-white">1h 0m</p>
         </div>
       </div>
+      <p className="mt-2 text-xs text-zinc-500">Current period: {formatPeriodRange(new Date())}</p>
     </div>
   );
 }

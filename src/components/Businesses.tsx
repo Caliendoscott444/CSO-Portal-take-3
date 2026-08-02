@@ -1,14 +1,15 @@
-import { Swords, type LucideIcon } from 'lucide-react';
+import { Swords, Gem, type LucideIcon } from 'lucide-react';
 import { businesses } from '../data';
-import { SectionHeader } from './Departments';
+import SectionHeader from './SectionHeader';
 
 const icons: Record<string, LucideIcon> = {
   Swords,
+  Gem,
 };
 
 export default function Businesses() {
   return (
-    <section id="partners" className="relative py-24 lg:py-32">
+    <section className="relative py-24 lg:py-32">
       <div className="mx-auto max-w-7xl px-5 lg:px-8">
         <SectionHeader
           eyebrow="Business Partners"
@@ -16,7 +17,7 @@ export default function Businesses() {
           subtitle="CSO builds strategic relationships with organizations that share our standards of professionalism, reliability, and tactical capability."
         />
 
-        <div className="mt-14 mx-auto max-w-xl">
+        <div className="mt-14 mx-auto grid max-w-4xl grid-cols-1 gap-6 sm:grid-cols-2">
           {businesses.map((b) => {
             const Icon = icons[b.icon] ?? Swords;
             return (

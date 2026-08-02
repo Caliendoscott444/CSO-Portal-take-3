@@ -5,6 +5,7 @@ import ApplyBanner from './components/ApplyBanner';
 import ScrollGlow from './components/ScrollGlow';
 import HomePage from './pages/HomePage';
 import DivisionsPage from './pages/DivisionsPage';
+import SubDivisionsPage from './pages/SubDivisionsPage';
 import PersonnelPage from './pages/PersonnelPage';
 import CommandPage from './pages/CommandPage';
 import PartnersPage from './pages/PartnersPage';
@@ -12,7 +13,6 @@ import AboutPage from './pages/AboutPage';
 import ApplicationsPage from './pages/ApplicationsPage';
 import PicturesPage from './pages/PicturesPage';
 import SuggestionsPage from './pages/SuggestionsPage';
-import PersonnelSuggestionsPage from './pages/PersonnelSuggestionsPage';
 import { AuthProvider } from './contexts/AuthContext';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import Login from './components/portal/Login';
@@ -24,6 +24,7 @@ import LeaveOfAbsence from './components/portal/LeaveOfAbsence';
 import Ranks from './components/portal/Ranks';
 import Roster from './components/portal/Roster';
 import Admin from './components/portal/Admin';
+import SubDivisionsManager from './components/portal/SubDivisionsManager';
 import Profile from './components/portal/Profile';
 import ComingSoon from './components/portal/ComingSoon';
 import Pictures from './components/portal/Pictures';
@@ -82,13 +83,13 @@ export default function App() {
           <Route path="/" element={<PublicSite><HomePage /></PublicSite>} />
           <Route path="/applications" element={<PublicSite><ApplicationsPage /></PublicSite>} />
           <Route path="/divisions" element={<PublicSite><DivisionsPage /></PublicSite>} />
+          <Route path="/subdivisions" element={<PublicSite><SubDivisionsPage /></PublicSite>} />
           <Route path="/personnel" element={<PublicSite><PersonnelPage /></PublicSite>} />
           <Route path="/command" element={<PublicSite><CommandPage /></PublicSite>} />
           <Route path="/partners" element={<PublicSite><PartnersPage /></PublicSite>} />
           <Route path="/about" element={<PublicSite><AboutPage /></PublicSite>} />
           <Route path="/pictures" element={<PublicSite><PicturesPage /></PublicSite>} />
           <Route path="/suggestions" element={<PublicSite><SuggestionsPage /></PublicSite>} />
-            <Route path="/personnel-suggestions" element={<PublicSite><PersonnelSuggestionsPage /></PublicSite>} />
 
           {/* Member portal — untouched */}
           <Route path="/login" element={<Login />} />
@@ -104,6 +105,7 @@ export default function App() {
           <Route path="/portal/media" element={<Portal><Pictures /></Portal>} />
           <Route path="/portal/media-manager" element={<Portal><MediaManager /></Portal>} />
           <Route path="/portal/admin" element={<Portal><Admin /></Portal>} />
+          <Route path="/portal/admin/subdivisions" element={<Portal><SubDivisionsManager /></Portal>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

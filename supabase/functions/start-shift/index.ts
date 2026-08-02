@@ -39,16 +39,28 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (existing) return json({ error: 'You already have an active shift.' }, 409);
 
-    if (shiftType.required_role_id) {
-      if (!profile?.discord_id) return json({ error: 'No linked Discord account.' }, 403);
-      const roles = await getMemberRoles(profile.discord_id);
-      if (!roles.includes(shiftType.required_role_id)) {
-        return json({ error: 'Missing the required Discord role for this shift.' }, 403);
-      }
-    }
+          if (shiftType.required_role_id) {
+  if (!profile?.discord_id) return json({ error: 'No linked Discord account.' }, 403);
+  const roles = await getMemberRoles(profile.discord_id);
+  console.log('DEBUG', {
+    discord_id: profile.discord_id,
+    required_role_id: shiftType.required_role_id,
+    roles_from_discord: roles,
+    guild_id_in_use: Deno.env.get('DISCORD_GUILD_ID'),
+  });
+  if (!roles.includes(shiftType.required_role_id)) {
+    return json({ error: 'Missing the required Discord role for this shift.' }, 403);
+  }
+}
 
     const now = new Date();
     const weekKey = isoWeekKey(now);
+
+    const { data: currentWave } = await supabase
+      .from('shift_waves')
+      .select('id')
+      .eq('is_current', true)
+      .maybeSingle();
 
     const { data: shift, error: insertErr } = await supabase
       .from('shifts')
@@ -58,6 +70,7 @@ Deno.serve(async (req) => {
         status: 'active',
         week_key: weekKey,
         started_at: now.toISOString(),
+        wave_id: currentWave?.id ?? null,
       })
       .select()
       .single();
@@ -79,19 +92,23 @@ Deno.serve(async (req) => {
 });
 
 function isoWeekKey(d: Date): string {
-  const target = new Date(d.valueOf());
-  const dayNr = (d.getUTCDay() + 6) % 7;
-  target.setUTCDate(target.getUTCDate() - dayNr + 3);
-  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-  const week =
-    1 +
-    Math.round(
-      ((target.getTime() - firstThursday.getTime()) / 86400000 -
-        3 +
-        ((firstThursday.getUTCDay() + 6) % 7)) /
-        7,
-    );
-  return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+  // NOTE: renamed in spirit only — this now returns the fixed 14-day
+  // period key, matching src/lib/period.ts's getPeriodKey() and the
+  // weekly_credit_v SQL view exactly. Do not change this without also
+  // updating both of those.
+  const ANCHOR_UTC = Date.UTC(2024, 0, 1); // Mon 2024-01-01
+  const PERIOD_DAYS = 14;
+  const DAY_MS = 86400000;
+
+  const dayUTC = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const daysSinceAnchor = Math.floor((dayUTC - ANCHOR_UTC) / DAY_MS);
+  const periodIndex = Math.floor(daysSinceAnchor / PERIOD_DAYS);
+  const start = new Date(ANCHOR_UTC + periodIndex * PERIOD_DAYS * DAY_MS);
+
+  const yyyy = start.getUTCFullYear();
+  const mm = String(start.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(start.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function json(body: unknown, status = 200) {
