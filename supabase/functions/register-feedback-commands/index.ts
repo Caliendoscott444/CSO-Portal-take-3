@@ -2,9 +2,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // IMPORTANT: Discord's bulk command registration REPLACES the entire guild command list
 // with whatever is in this file's `commands` array. This file must always include every
-// guild-scoped slash command your bot has (shift, feedback, reaction_role, punish, and any
-// future ones) — never run a registration script that only lists a subset, or it will
-// silently delete the commands that were left out.
+// guild-scoped slash command your bot has (shift, feedback, apply, loa, reaction_role,
+// amendment, revoke, edit_punishment, appeal, close_appeal_ticket, end_investigation,
+// view_cases, warn, kick, ban, unban, timeout, cases, edit_case, remove_case,
+// chain_of_command, punish, suggestions, personnel_suggestions, and any future ones) —
+// never run a registration script that only lists a subset, or it will silently delete
+// the commands that were left out.
 
 Deno.serve(async (_req) => {
   try {
@@ -40,6 +43,20 @@ Deno.serve(async (_req) => {
         ],
       },
       {
+        name: "apply",
+        description: "Start a CSO application",
+      },
+      {
+        name: "loa",
+        description: "Submit a Leave of Absence request",
+        options: [
+          { type: 3, name: "start_date", description: "Start date (YYYY-MM-DD)", required: true },
+          { type: 3, name: "end_date", description: "End date (YYYY-MM-DD)", required: true },
+          { type: 6, name: "commander", description: "Which commander is this request for?", required: true },
+          { type: 3, name: "reason", description: "Why are you requesting leave?", required: true },
+        ],
+      },
+      {
         name: "reaction_role",
         description: "Post a reaction-role menu (restricted role only)",
         options: [
@@ -62,6 +79,180 @@ Deno.serve(async (_req) => {
         ],
       },
       {
+        name: "amendment",
+        description: "DM yourself the full text of all 27 Amendments to the U.S. Constitution",
+      },
+      {
+        name: "revoke",
+        description: "Forcefully revoke an active punishment",
+        options: [
+          { type: 4, name: "case_id", description: "The case ID to revoke", required: true },
+          { type: 3, name: "reason", description: "Why this case is being revoked", required: false },
+        ],
+      },
+      {
+        name: "edit_punishment",
+        description: "Edit an existing moderation case (record only \u2014 doesn't change roles/timeout)",
+        options: [
+          { type: 4, name: "case_id", description: "The case ID to edit", required: true },
+          { type: 3, name: "reason", description: "New reason", required: false },
+          {
+            type: 3,
+            name: "punishment_type",
+            description: "New punishment type",
+            required: false,
+            choices: [
+              { name: "Warning", value: "Warning" },
+              { name: "Fire Warning", value: "Fire Warning" },
+              { name: "Infraction", value: "Infraction" },
+              { name: "Strike", value: "Strike" },
+              { name: "Under Investigation", value: "Under Investigation" },
+              { name: "Suspension", value: "Suspension" },
+              { name: "Termination", value: "Termination" },
+              { name: "Demotion", value: "Demotion" },
+            ],
+          },
+          {
+            type: 4,
+            name: "duration_minutes",
+            description: "New timeout length in minutes (only used for Suspension)",
+            required: false,
+            min_value: 1,
+            max_value: 40320,
+          },
+          { type: 5, name: "appealable", description: "New appealable value", required: false },
+          { type: 3, name: "start_date", description: "New suspension start date YYYY-MM-DD", required: false },
+          { type: 3, name: "end_date", description: "New suspension end date YYYY-MM-DD", required: false },
+        ],
+      },
+      {
+        name: "appeal",
+        description: "Appeal a moderation case against you",
+        options: [
+          { type: 4, name: "case_id", description: "The case ID you want to appeal", required: true },
+          { type: 3, name: "reason", description: "Why you believe this should be reversed", required: true },
+        ],
+      },
+      {
+        name: "close_appeal_ticket",
+        description: "Close the current appeal ticket and log it",
+      },
+      {
+        name: "end_investigation",
+        description: "End an active investigation and resolve the member's punishment",
+        options: [
+          { type: 6, name: "member", description: "The member whose investigation should be ended", required: true },
+          {
+            type: 3,
+            name: "punishment",
+            description: "What punishment will this member receive as a result of the investigation?",
+            required: true,
+            choices: [
+              { name: "None", value: "None" },
+              { name: "Suspension", value: "Suspension" },
+              { name: "Termination", value: "Termination" },
+            ],
+          },
+        ],
+      },
+      {
+        name: "view_cases",
+        description: "View a member's moderation cases (restricted role only)",
+        options: [
+          { type: 6, name: "member", description: "Whose cases do you want to view?", required: true },
+        ],
+      },
+      {
+        name: "warn",
+        description: "Warn a member and DM them",
+        options: [
+          { type: 6, name: "member", description: "The member to warn", required: true },
+          { type: 3, name: "reason", description: "Why this member is being warned", required: true },
+        ],
+      },
+      {
+        name: "kick",
+        description: "Kick a member from the server",
+        options: [
+          { type: 6, name: "member", description: "The member to kick", required: true },
+          { type: 3, name: "reason", description: "Why this member is being kicked", required: true },
+        ],
+      },
+      {
+        name: "ban",
+        description: "Ban a member from the server",
+        options: [
+          { type: 6, name: "member", description: "The member to ban", required: true },
+          { type: 3, name: "reason", description: "Why this member is being banned", required: true },
+          {
+            type: 4,
+            name: "delete_message_days",
+            description: "Days of their messages to delete (0-7, default 0)",
+            required: false,
+            min_value: 0,
+            max_value: 7,
+          },
+        ],
+      },
+      {
+        name: "unban",
+        description: "Unban a member from the server",
+        options: [
+          { type: 6, name: "member", description: "The member to unban", required: true },
+          { type: 3, name: "reason", description: "Why this member is being unbanned", required: false },
+        ],
+      },
+      {
+        name: "timeout",
+        description: "Time out a member",
+        options: [
+          { type: 6, name: "member", description: "The member to time out", required: true },
+          { type: 3, name: "reason", description: "Why this member is being timed out", required: true },
+          {
+            type: 4,
+            name: "duration_minutes",
+            description: "Timeout length in minutes",
+            required: true,
+            min_value: 1,
+            max_value: 40320,
+          },
+        ],
+      },
+      {
+        name: "cases",
+        description: "View a member's warns, kicks, and bans (restricted role only)",
+        options: [
+          { type: 6, name: "member", description: "Whose cases do you want to view?", required: true },
+        ],
+      },
+      {
+        name: "edit_case",
+        description: "Edit a warn/kick/ban/timeout case (record only \u2014 doesn't undo the action)",
+        options: [
+          { type: 4, name: "case_id", description: "The case ID to edit", required: true },
+          { type: 3, name: "reason", description: "New reason", required: false },
+          {
+            type: 4,
+            name: "duration_minutes",
+            description: "New duration in minutes (only used for Timeout)",
+            required: false,
+            min_value: 1,
+            max_value: 40320,
+          },
+        ],
+      },
+      {
+        name: "remove_case",
+        description: "Permanently delete a case record (doesn't undo any role/timeout/ban/kick)",
+        options: [
+          { type: 4, name: "case_id", description: "The case ID to remove", required: true },
+        ],
+      },
+      {
+        name: "chain_of_command",
+        description: "Post the CSO chain of command",
+      },
+      {
         name: "punish",
         description: "Punish a member and log a moderation case",
         options: [
@@ -79,6 +270,7 @@ Deno.serve(async (_req) => {
               { name: "Under Investigation", value: "Under Investigation" },
               { name: "Suspension", value: "Suspension" },
               { name: "Termination", value: "Termination" },
+              { name: "Demotion", value: "Demotion" },
             ],
           },
           { type: 3, name: "reason", description: "Why this member is being punished", required: true },
@@ -91,9 +283,21 @@ Deno.serve(async (_req) => {
             min_value: 1,
             max_value: 40320,
           },
+          { type: 3, name: "start_date", description: "Suspension start date YYYY-MM-DD (only used for Suspension)", required: false },
+          { type: 3, name: "end_date", description: "Suspension end date YYYY-MM-DD \u2014 role auto-removed after this date (only used for Suspension)", required: false },
+          { type: 8, name: "demote_from_role", description: "Role to remove (only used for Demotion)", required: false },
+          { type: 8, name: "demote_to_role", description: "Role to add (only used for Demotion)", required: false },
           { type: 11, name: "proof", description: "Optional proof (screenshot/image/file)", required: false },
           { type: 3, name: "text_proof", description: "Optional text proof/evidence", required: false },
         ],
+      },
+      {
+        name: "suggestions",
+        description: "Submit a suggestion",
+      },
+      {
+        name: "personnel_suggestions",
+        description: "Submit a personnel suggestion",
       },
     ];
 
