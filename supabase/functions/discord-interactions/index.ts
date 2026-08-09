@@ -6,6 +6,12 @@
 //   /feedback           -> opens a modal (rating 1-5 + notes), posts a styled embed on submit
 //   /reaction_role      -> posts an embed with a dropdown; picking an option toggles a role
 //   /apply              -> multi-step application form (modal chain), posts submission for review
+//   /report              -> asks who to report, the reason, and whether they have proof; creates a
+//                           private report ticket channel with the answers
+//   /management_ticket   -> asks the reason; creates a private management ticket channel
+//   /inquiry_ticket      -> asks the reason; creates a private inquiry ticket channel
+//   /close_ticket        -> staff-only, closes the current report/management/inquiry ticket and
+//                           logs a transcript
 //   LOA approve/deny buttons + modals (posted elsewhere, handled here)
 //
 // Required secrets (set with `supabase secrets set`):
@@ -18,6 +24,9 @@
 //   LOA_APPROVER_ROLE_ID     - role allowed to approve/deny LOA requests
 //   LOA_CHANNEL_ID           - channel LOA approve/deny notifications are posted to
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY - standard Supabase function env
+//
+// Report/management/inquiry ticket category, review roles, and log channel are hardcoded
+// near the top of this file (not secrets) \u2014 same pattern as APPEAL_TICKET_CATEGORY_ID.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import nacl from "npm:tweetnacl@1.0.3";
@@ -37,6 +46,43 @@ const APPLY_ALLOWED_ROLE_ID = "1530325162560458752";
 const APPEAL_ALLOWED_ROLE_ID = "1462500854253883455";
 const APPEAL_REVIEW_ROLE_ID = "1530325162560458752";
 const APPEAL_TICKET_CATEGORY_ID = "1531494351673495722";
+// ---------- Support ticket system (report / management / inquiry) ----------
+// All three ticket types currently share the same category and transcript log channel;
+// each has its own set of review roles that get pinged in the ticket and can close it.
+const TICKET_LOG_CHANNEL_ID = "1462489107883364465";
+
+const REPORT_TICKET_CATEGORY_ID = "1462489110659993721";
+const REPORT_REVIEW_ROLE_IDS = [
+  "1511751384637374525",
+  "1532169753022693479",
+  "1462490581291761841",
+  "1462490786842280072",
+  "1469915757583270031",
+  "1495923952038449354",
+  "1466226180863561738",
+];
+
+const MANAGEMENT_TICKET_CATEGORY_ID = "1462489110659993721";
+const MANAGEMENT_REVIEW_ROLE_IDS = [
+  "1511751384637374525",
+  "1532169753022693479",
+  "1462490581291761841",
+  "1462490786842280072",
+];
+
+const INQUIRY_TICKET_CATEGORY_ID = "1462489110659993721";
+const INQUIRY_REVIEW_ROLE_IDS = [
+  // NOTE: the first role ID you sent for this list ("511751384637374525") was one digit
+  // short of the "1511751384637374525" used in the other two lists — assuming that's a typo
+  // and it's meant to be the same role. Fix this line if that assumption is wrong.
+  "1511751384637374525",
+  "1532169753022693479",
+  "1462490581291761841",
+  "1462490786842280072",
+  "1469915757583270031",
+  "1495923952038449354",
+  "1466226180863561738",
+];
 const INVESTIGATION_ROLE_ID = "1522316411219738694";
 const INVESTIGATION_ISSUER_ROLE_ID = "1530325162560458752";
 // Role applied to a member when they're punished with Suspension via /punish.
@@ -53,6 +99,9 @@ const APPLICATION_AI_CHECK_LOG_CHANNEL_ID = "1532302856248627230";
 const APPLICATION_ACCEPT_ADD_ROLE_ID = "1467421508803629129";
 // ...and this role is removed (no-op if the member doesn't have it).
 const APPLICATION_ACCEPT_REMOVE_ROLE_ID = "1467674380023894111";
+// On Accept: the member's server nickname is set to "<prefix> <their current name>"
+// (truncated to Discord's 32-character nickname limit).
+const APPLICATION_ACCEPT_NICKNAME_PREFIX = "(TR)";
 // TODO: set this to the server's exact display name/branding as it should appear in DMs to
 // members, e.g. "\u2728 | Comet Strategic Operations Corporation\u2122" \u2014 copy the exact text/emoji/symbol.
 const SERVER_NAME = "\u2728 | Comet Strategic Operations Corporation";
@@ -838,6 +887,102 @@ async function createAppealTicketChannel(
   } catch {
     return null;
   }
+}
+
+async function createSupportTicketChannel(
+  discordApi: (path: string, init?: RequestInit) => Promise<Response>,
+  guildId: string,
+  categoryId: string,
+  reviewRoleIds: string[],
+  creatorId: string,
+  creatorUsername: string,
+  namePrefix: string,
+): Promise<string | null> {
+  try {
+    const rolesRes = await discordApi(`/guilds/${guildId}/roles`);
+    const rolesList = rolesRes.ok ? await rolesRes.json() : [];
+    const meRes = await discordApi(`/users/@me`);
+    const me = meRes.ok ? await meRes.json() : null;
+
+    const permissionOverwrites: any[] = [
+      { id: guildId, type: 0, deny: String(PERM_VIEW_CHANNEL) },
+      {
+        id: creatorId,
+        type: 1,
+        allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY),
+      },
+    ];
+    if (me?.id) {
+      permissionOverwrites.push({
+        id: me.id,
+        type: 1,
+        allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY | PERM_MANAGE_CHANNELS),
+      });
+    }
+    for (const roleId of reviewRoleIds) {
+      permissionOverwrites.push({
+        id: roleId,
+        type: 0,
+        allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY),
+      });
+    }
+    for (const role of rolesList) {
+      const rolePerms = BigInt(role.permissions ?? "0");
+      if ((rolePerms & PERMISSION_MODERATE_MEMBERS) !== 0n || (rolePerms & PERMISSION_ADMINISTRATOR) !== 0n) {
+        permissionOverwrites.push({
+          id: role.id,
+          type: 0,
+          allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY),
+        });
+      }
+    }
+
+    const safeName = creatorUsername.toLowerCase().replace(/[^a-z0-9-]/g, "") || "member";
+    const channelName = `${namePrefix}-${safeName}-${Date.now().toString().slice(-5)}`;
+
+    const createChanRes = await discordApi(`/guilds/${guildId}/channels`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: channelName,
+        type: 0,
+        parent_id: categoryId,
+        permission_overwrites: permissionOverwrites,
+      }),
+    });
+    if (!createChanRes.ok) return null;
+    const chan = await createChanRes.json();
+    return chan.id;
+  } catch {
+    return null;
+  }
+}
+
+function buildSupportTicketTranscriptText(channelName: string, closedById: string, messages: any[]): string {
+  const lines: string[] = [];
+  lines.push(`Support Ticket Transcript \u2014 #${channelName}`);
+  lines.push(`Closed by: ${closedById}`);
+  lines.push(`Closed: ${new Date().toISOString()}`);
+  lines.push("=".repeat(60));
+  lines.push("");
+
+  for (const m of messages) {
+    const author = m.author?.username ?? "unknown";
+    const ts = new Date(m.timestamp).toISOString().replace("T", " ").slice(0, 19);
+    lines.push(`[${ts}] ${author}: ${m.content ?? ""}`);
+    for (const embed of m.embeds ?? []) {
+      if (embed.title) lines.push(`    embed: ${embed.title}`);
+      for (const f of embed.fields ?? []) {
+        lines.push(`      ${f.name}: ${f.value}`);
+      }
+    }
+    for (const att of m.attachments ?? []) {
+      lines.push(`    attachment: ${att.url}`);
+    }
+  }
+
+  if (messages.length === 0) lines.push("(no messages were sent in this ticket)");
+
+  return lines.join("\n");
 }
 
 // ---------- main handler ----------
@@ -2246,6 +2391,202 @@ if (commandName === "feedback") {
       );
     }
 
+    if (commandName === "report") {
+      const opts = body.data.options ?? [];
+      const get = (name: string) => opts.find((o: any) => o.name === name)?.value;
+      const reportedUserId: string = get("member");
+      const reason: string = get("reason");
+      const hasProof: string = get("proof"); // "yes" | "no"
+
+      const reporterUsername = body.member?.user?.username ?? "member";
+      const channelId = await createSupportTicketChannel(
+        discordApi, GUILD_ID, REPORT_TICKET_CATEGORY_ID, REPORT_REVIEW_ROLE_IDS, discordUserId!, reporterUsername, "report",
+      );
+
+      const reportEmbed: any = {
+        title: "\uD83D\uDEA9 New Report",
+        color: 0xed4245,
+        thumbnail: { url: CSO_LOGO_URL },
+        fields: [
+          { name: "\uD83D\uDC64 Reported By", value: `<@${discordUserId}>`, inline: true },
+          { name: "\uD83D\uDEA9 Reporting", value: `<@${reportedUserId}>`, inline: true },
+          { name: "\uD83D\uDCF8 Has Proof?", value: hasProof === "yes" ? "Yes" : "No", inline: true },
+          { name: "\uD83D\uDCDD Reason", value: reason, inline: false },
+        ],
+      };
+
+      if (channelId) {
+        await discordApi(`/channels/${channelId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({
+            content: REPORT_REVIEW_ROLE_IDS.map((id) => `<@&${id}>`).join(" "),
+            embeds: [reportEmbed],
+          }),
+        });
+
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: `Your report has been submitted: <#${channelId}>`, flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: {
+            content:
+              "I couldn't create a private ticket channel for your report. Ask an admin to give me the Manage Channels permission.",
+            flags: 64,
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "management_ticket" || commandName === "inquiry_ticket") {
+      const isManagement = commandName === "management_ticket";
+      const opts = body.data.options ?? [];
+      const reason: string = opts.find((o: any) => o.name === "reason")?.value ?? "";
+
+      const categoryId = isManagement ? MANAGEMENT_TICKET_CATEGORY_ID : INQUIRY_TICKET_CATEGORY_ID;
+      const reviewRoleIds = isManagement ? MANAGEMENT_REVIEW_ROLE_IDS : INQUIRY_REVIEW_ROLE_IDS;
+      const namePrefix = isManagement ? "management" : "inquiry";
+      const openerUsername = body.member?.user?.username ?? "member";
+
+      const channelId = await createSupportTicketChannel(
+        discordApi, GUILD_ID, categoryId, reviewRoleIds, discordUserId!, openerUsername, namePrefix,
+      );
+
+      const ticketEmbed: any = {
+        title: isManagement ? "\uD83D\uDCC1 New Management Ticket" : "\u2753 New Inquiry Ticket",
+        color: isManagement ? 0x5865f2 : 0x57f287,
+        thumbnail: { url: CSO_LOGO_URL },
+        fields: [
+          { name: "\uD83D\uDC64 Opened By", value: `<@${discordUserId}>`, inline: true },
+          { name: "\uD83D\uDCDD Reason", value: reason, inline: false },
+        ],
+      };
+
+      if (channelId) {
+        await discordApi(`/channels/${channelId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({
+            content: reviewRoleIds.map((id) => `<@&${id}>`).join(" "),
+            embeds: [ticketEmbed],
+          }),
+        });
+
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: `Your ticket has been created: <#${channelId}>`, flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: {
+            content:
+              "I couldn't create a private ticket channel. Ask an admin to give me the Manage Channels permission.",
+            flags: 64,
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "close_ticket") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You need the Moderate Members permission to use this command.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const currentChannelId = body.channel_id;
+      let currentChannelName: string | undefined = body.channel?.name;
+      if (!currentChannelName) {
+        const chanRes = await discordApi(`/channels/${currentChannelId}`);
+        currentChannelName = chanRes.ok ? (await chanRes.json())?.name : undefined;
+      }
+      currentChannelName = currentChannelName ?? currentChannelId;
+
+      const isSupportTicket =
+        currentChannelName.startsWith("report-") ||
+        currentChannelName.startsWith("management-") ||
+        currentChannelName.startsWith("inquiry-");
+
+      if (!isSupportTicket) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "This channel isn't an open report, management, or inquiry ticket.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const closeEmbed = {
+        title: "\uD83D\uDD12 Ticket Closed",
+        description: `The ticket #${currentChannelName} was closed by <@${discordUserId}>.`,
+        color: 0x99a1af,
+      };
+
+      const closeTask = (async () => {
+        let transcriptText = "";
+        try {
+          const messages = await fetchAllChannelMessages(discordApi, currentChannelId);
+          transcriptText = buildSupportTicketTranscriptText(currentChannelName!, discordUserId!, messages);
+        } catch (err) {
+          console.error("Transcript fetch failed:", err);
+        }
+
+        try {
+          if (transcriptText) {
+            await postMessageWithFile(
+              BOT_TOKEN,
+              TICKET_LOG_CHANNEL_ID,
+              { embeds: [closeEmbed] },
+              `${currentChannelName}-transcript.txt`,
+              transcriptText,
+            );
+          } else {
+            await discordApi(`/channels/${TICKET_LOG_CHANNEL_ID}/messages`, {
+              method: "POST",
+              body: JSON.stringify({ embeds: [closeEmbed] }),
+            });
+          }
+        } catch {
+          // best-effort
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        try {
+          await discordApi(`/channels/${currentChannelId}`, { method: "DELETE" });
+        } catch {
+          // best-effort
+        }
+      })();
+
+      // @ts-ignore - EdgeRuntime is provided by the Supabase Edge Functions runtime
+      if (typeof EdgeRuntime !== "undefined") {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(closeTask);
+      } else {
+        await closeTask;
+      }
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: { content: `Closing this ticket and logging it in <#${TICKET_LOG_CHANNEL_ID}>...` },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     if (commandName === "close_appeal_ticket") {
       if (!hasModeratePermission(body.member?.permissions)) {
         return new Response(
@@ -2607,12 +2948,178 @@ if (commandName === "feedback") {
       });
     }
 
+    if (commandName === "fastpass") {
+      const targetUser = body.data.options?.find((o: any) => o.name === "user")?.value;
+
+      const embed = {
+        color: 0x2ecc71,
+        description:
+          "# Thank you for trying to fast pass into Comet Strategic Operations!\n" +
+          "You're subject to a No Tolerance Period for a total of 7 days. You will need to attend events or be on shift events for those 7 total days. If you don't complete this task, you're subject to exile and a 7 day blacklist that's unappealable.\n\n" +
+          "## __You will be put into the rank of Logistics Coordinator after passing your training. You will work at the frontlines along with the COMET task force and Reconnaissance unit.__\n\n" +
+          "## Please accept if you agree to the following terms. Failure to do so within 12 hours will result in this ticket being closed.",
+      };
+
+      const components = [
+        {
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 3,
+              label: "\u2705 I Agree",
+              custom_id: `fastpass_agree_${targetUser}`,
+            },
+          ],
+        },
+      ];
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: {
+            content: `<@${targetUser}>`,
+            embeds: [embed],
+            components,
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "training_finished") {
+      const opts = body.data.options || [];
+      const getOpt = (name: string) => opts.find((o: any) => o.name === name)?.value;
+
+      const trainerRoblox = getOpt("trainer_roblox");
+      const trainerDiscordId = getOpt("trainer_discord");
+      const timeStarted = getOpt("time_started");
+      const timeFinished = getOpt("time_finished");
+      const attendedCount = getOpt("attended_count");
+      const attendedNames = getOpt("attended_names");
+      const passedCount = getOpt("passed_count");
+      const passedNames = getOpt("passed_names");
+      const notes = getOpt("notes");
+      const startingScreenshotId = getOpt("starting_screenshot");
+      const endingScreenshotId = getOpt("ending_screenshot");
+      const proofAttachmentId = getOpt("proof");
+
+      const resolvedAttachments = body.data.resolved?.attachments || {};
+      const startingScreenshotUrl = startingScreenshotId ? resolvedAttachments[startingScreenshotId]?.url : undefined;
+      const endingScreenshotUrl = endingScreenshotId ? resolvedAttachments[endingScreenshotId]?.url : undefined;
+      const proofUrl = proofAttachmentId ? resolvedAttachments[proofAttachmentId]?.url : undefined;
+
+      const TRAINING_PING_ROLE_ID = "1530325162560458752";
+      const TRAINING_THREAD_ID = "1490200623541522622";
+
+      const embed = {
+        color: 0x3498db,
+        title: "Training Finished",
+        fields: [
+          { name: "Trainer (Roblox)", value: String(trainerRoblox), inline: true },
+          { name: "Trainer (Discord)", value: `<@${trainerDiscordId}>`, inline: true },
+          { name: "Time Started", value: String(timeStarted), inline: true },
+          { name: "Time Finished", value: String(timeFinished), inline: true },
+          { name: `Attended (${attendedCount})`, value: String(attendedNames) },
+          { name: `Passed (${passedCount})`, value: String(passedNames) },
+          { name: "Notes", value: notes ? String(notes) : "None" },
+          ...(proofUrl ? [{ name: "\uD83D\uDCF7 | Additional Proof", value: `[View Attachment](${proofUrl})` }] : []),
+        ],
+        timestamp: new Date().toISOString(),
+      };
+
+      const embeds: any[] = [embed];
+      if (startingScreenshotUrl) {
+        embeds.push({ color: 0x3498db, title: "Starting Screenshot", image: { url: startingScreenshotUrl } });
+      }
+      if (endingScreenshotUrl) {
+        embeds.push({ color: 0x3498db, title: "Ending Screenshot", image: { url: endingScreenshotUrl } });
+      }
+
+      const postRes = await discordApi(`/channels/${TRAINING_THREAD_ID}/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          content: `<@&${TRAINING_PING_ROLE_ID}>`,
+          embeds,
+          allowed_mentions: { roles: [TRAINING_PING_ROLE_ID] },
+        }),
+      });
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: postRes.ok
+            ? { content: `Training report posted in <#${TRAINING_THREAD_ID}>.`, flags: 64 }
+            : { content: "I couldn't post to that thread — check my permissions there.", flags: 64 },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     return new Response("Unknown command", { status: 400 });
   }
 
   // ---------- Button clicks / select menus ----------
   if (body.type === 3) {
     const customId: string = body.data.custom_id;
+
+    // --- Fastpass: accept button ---
+    if (customId.startsWith("fastpass_agree_")) {
+      const targetId = customId.replace("fastpass_agree_", "");
+      const clickerId = body.member?.user?.id;
+
+      if (clickerId !== targetId) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "This isn't your fast pass ticket to accept.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const currentNick =
+        body.member.nick || body.member.user.global_name || body.member.user.username;
+      const newNick = `[TR] ${currentNick}`.slice(0, 32);
+
+      const FASTPASS_ROLES_TO_REMOVE = [
+        "1462501077860483072",
+        "1467674380023894111",
+        "1490150469778280578",
+      ];
+      const FASTPASS_ROLES_TO_ADD = ["1467421508803629129", "1467667392669810783"];
+
+      const currentRoles: string[] = body.member.roles || [];
+      const newRoles = Array.from(
+        new Set(
+          currentRoles
+            .filter((r) => !FASTPASS_ROLES_TO_REMOVE.includes(r))
+            .concat(FASTPASS_ROLES_TO_ADD),
+        ),
+      );
+
+      try {
+        await discordApi(`/guilds/${GUILD_ID}/members/${targetId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ nick: newNick, roles: newRoles }),
+        });
+      } catch {
+        // best-effort
+      }
+
+      const updatedEmbed = {
+        ...body.message.embeds[0],
+        footer: { text: "\u2705 Terms accepted" },
+      };
+
+      return new Response(
+        JSON.stringify({
+          type: 7,
+          data: { embeds: [updatedEmbed], components: [] },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
 
     // --- Apply flow: template picker ---
     if (customId === "apply_template_select") {
@@ -2983,61 +3490,32 @@ if (commandName === "feedback") {
         );
       }
 
-      if (accept) {
-        try {
-          await discordApi(
-            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}/roles/${APPLICATION_ACCEPT_ADD_ROLE_ID}`,
-            { method: "PUT" },
-          );
-        } catch {
-          // best-effort
-        }
-        try {
-          await discordApi(
-            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}/roles/${APPLICATION_ACCEPT_REMOVE_ROLE_ID}`,
-            { method: "DELETE" },
-          );
-        } catch {
-          // best-effort — no-op if they don't have the role
-        }
-      }
-
-      const disabledComponents = (body.message?.components ?? []).map((row: any) => ({
-        ...row,
-        components: row.components.map((c: any) => ({ ...c, disabled: true })),
-      }));
-
-      const resultEmbed = accept
-        ? {
-            title: "\u2705 Application Accepted",
-            description: `${submissionRow.discord_username}'s application was accepted by <@${discordUserId}>.`,
-            color: 0x22c55e,
-            footer: { text: `Submission ID: ${submissionRow.id}` },
-          }
-        : {
-            title: "\u274C Application Denied",
-            description: `${submissionRow.discord_username}'s application was denied by <@${discordUserId}>.`,
-            color: 0xed4245,
-            footer: { text: `Submission ID: ${submissionRow.id}` },
-          };
-
-      await discordApi(`/channels/${APPLICATION_LOG_CHANNEL_ID}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ embeds: [resultEmbed] }),
-      });
-
-      try {
-        await sendDM(submissionRow.discord_user_id, {
-          content: accept
-            ? "Congratulations! Your CSO application has been **accepted**."
-            : "Thank you for applying. Unfortunately your CSO application has been **denied**.",
-        });
-      } catch {
-        // best-effort
-      }
-
       return new Response(
-        JSON.stringify({ type: 7, data: { components: disabledComponents } }),
+        JSON.stringify({
+          type: 9,
+          data: {
+            custom_id: `${accept ? "app_accept_modal" : "app_deny_modal"}:${submissionId}`,
+            title: accept ? "Accept Application" : "Deny Application",
+            components: [
+              {
+                type: 1,
+                components: [
+                  {
+                    type: 4,
+                    custom_id: "reason",
+                    style: 2,
+                    label: "Notes / reason",
+                    placeholder: accept
+                      ? "Overall you seem like a promising candidate! Welcome..."
+                      : "Explain why this application is being denied...",
+                    required: true,
+                    max_length: 1000,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
         { headers: { "Content-Type": "application/json" } },
       );
     }
@@ -3386,6 +3864,126 @@ if (commandName === "feedback") {
 
       return new Response(
         JSON.stringify({ type: 4, data: { content: "Thanks — your feedback has been submitted!", flags: 64 } }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // --- Application accept/deny modal (reason + full Q&A reproduced in log + DM) ---
+    if (customId.startsWith("app_accept_modal:") || customId.startsWith("app_deny_modal:")) {
+      const accept = customId.startsWith("app_accept_modal:");
+      const submissionId = customId.split(":")[1];
+      const reason = getComponentValue(body.data.components ?? [], "reason");
+
+      if (!memberRoles.includes(APPLICATION_REVIEW_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to review applications.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: submissionRow } = await supabase
+        .from("application_submissions")
+        .select("*")
+        .eq("id", submissionId)
+        .maybeSingle();
+
+      if (!submissionRow) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This application no longer exists.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (accept) {
+        try {
+          const memberRes = await discordApi(
+            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}`,
+            { method: "GET" },
+          );
+          const memberData = memberRes.ok ? await memberRes.json() : null;
+          const currentName =
+            memberData?.nick?.trim() ||
+            memberData?.user?.global_name?.trim() ||
+            memberData?.user?.username?.trim() ||
+            submissionRow.discord_username?.trim() ||
+            "Member";
+          const newNickname = `${APPLICATION_ACCEPT_NICKNAME_PREFIX} ${currentName}`.slice(0, 32);
+          await discordApi(
+            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}`,
+            { method: "PATCH", body: JSON.stringify({ nick: newNickname }) },
+          );
+        } catch {
+          // best-effort — bot may lack permission to nickname this member
+          // (e.g. they outrank the bot, or they're the server owner)
+        }
+        try {
+          await discordApi(
+            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}/roles/${APPLICATION_ACCEPT_ADD_ROLE_ID}`,
+            { method: "PUT" },
+          );
+        } catch {
+          // best-effort
+        }
+        try {
+          await discordApi(
+            `/guilds/${GUILD_ID}/members/${submissionRow.discord_user_id}/roles/${APPLICATION_ACCEPT_REMOVE_ROLE_ID}`,
+            { method: "DELETE" },
+          );
+        } catch {
+          // best-effort — no-op if they don't have the role
+        }
+      }
+
+      // Pull this submission's actual questions/answers so the log + DM reproduce
+      // the real application instead of a generic summary.
+      const { data: answerRows } = await supabase
+        .from("application_answers")
+        .select("*")
+        .eq("submission_id", submissionId)
+        .order("id", { ascending: true });
+
+      const qaFields = (answerRows ?? []).map((a: any) => ({
+        name: (a.question_text ?? "Question").slice(0, 256),
+        value: (a.answer_text?.trim() || "*No answer provided*").slice(0, 1024),
+        inline: false,
+      }));
+
+      const decisionContent = accept
+        ? `\u2705 <@${submissionRow.discord_user_id}>'s submission has been accepted successfully by <@${discordUserId}> with reason:`
+        : `\u274C <@${submissionRow.discord_user_id}>'s submission has been denied by <@${discordUserId}> with reason:`;
+
+      const notesEmbed = { description: `**Notes:** ${reason}` };
+
+      const applicationEmbed = {
+        title: `${submissionRow.discord_username}'s 'CSO Application' Application Submitted`,
+        color: accept ? 0x22c55e : 0xed4245,
+        fields: qaFields,
+        footer: { text: `Submission ID: ${submissionRow.id}` },
+      };
+
+      const resultPayload = { content: decisionContent, embeds: [notesEmbed, applicationEmbed] };
+
+      await discordApi(`/channels/${APPLICATION_LOG_CHANNEL_ID}/messages`, {
+        method: "POST",
+        body: JSON.stringify(resultPayload),
+      });
+
+      try {
+        await sendDM(submissionRow.discord_user_id, resultPayload);
+      } catch {
+        // best-effort
+      }
+
+      const disabledComponents = (body.message?.components ?? []).map((row: any) => ({
+        ...row,
+        components: row.components.map((c: any) => ({ ...c, disabled: true })),
+      }));
+
+      return new Response(
+        JSON.stringify({ type: 7, data: { components: disabledComponents } }),
         { headers: { "Content-Type": "application/json" } },
       );
     }

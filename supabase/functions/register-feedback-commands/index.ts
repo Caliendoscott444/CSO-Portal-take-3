@@ -5,7 +5,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // guild-scoped slash command your bot has (shift, feedback, apply, loa, reaction_role,
 // amendment, revoke, edit_punishment, appeal, close_appeal_ticket, end_investigation,
 // view_cases, warn, kick, ban, unban, timeout, cases, edit_case, remove_case,
-// chain_of_command, punish, suggestions, personnel_suggestions, and any future ones) —
+// chain_of_command, punish, suggestions, personnel_suggestions, report, management_ticket,
+// inquiry_ticket, close_ticket, and any future ones) —
 // never run a registration script that only lists a subset, or it will silently delete
 // the commands that were left out.
 
@@ -136,6 +137,42 @@ Deno.serve(async (_req) => {
       {
         name: "close_appeal_ticket",
         description: "Close the current appeal ticket and log it",
+      },
+      {
+        name: "report",
+        description: "Report a member to staff",
+        options: [
+          { type: 6, name: "member", description: "Who are you reporting?", required: true },
+          { type: 3, name: "reason", description: "Why are you reporting them?", required: true },
+          {
+            type: 3,
+            name: "proof",
+            description: "Do you have proof?",
+            required: true,
+            choices: [
+              { name: "Yes", value: "yes" },
+              { name: "No", value: "no" },
+            ],
+          },
+        ],
+      },
+      {
+        name: "management_ticket",
+        description: "Open a management ticket",
+        options: [
+          { type: 3, name: "reason", description: "Why are you opening this ticket?", required: true },
+        ],
+      },
+      {
+        name: "inquiry_ticket",
+        description: "Open an inquiry / support ticket",
+        options: [
+          { type: 3, name: "reason", description: "Why are you opening this ticket?", required: true },
+        ],
+      },
+      {
+        name: "close_ticket",
+        description: "Close the current report, management, or inquiry ticket and log it",
       },
       {
         name: "end_investigation",
@@ -298,6 +335,36 @@ Deno.serve(async (_req) => {
       {
         name: "personnel_suggestions",
         description: "Submit a personnel suggestion",
+      },
+      {
+        name: "fastpass",
+        description: "Send Comet Strategic Operations fast pass terms to a user",
+        options: [
+          {
+            type: 6, // USER
+            name: "user",
+            description: "The user being fast passed",
+            required: true,
+          },
+        ],
+      },
+      {
+        name: "training_finished",
+        description: "Log a completed training session",
+        options: [
+          { type: 3, name: "trainer_roblox", description: "Trainer's Roblox username", required: true },
+          { type: 6, name: "trainer_discord", description: "The trainer (Discord user)", required: true },
+          { type: 3, name: "time_started", description: "Exact time the training started", required: true },
+          { type: 3, name: "time_finished", description: "Exact time the training finished", required: true },
+          { type: 4, name: "attended_count", description: "How many people attended", required: true },
+          { type: 3, name: "attended_names", description: "Names of everyone who attended", required: true },
+          { type: 4, name: "passed_count", description: "How many people passed", required: true },
+          { type: 3, name: "passed_names", description: "Names of everyone who passed", required: true },
+          { type: 11, name: "starting_screenshot", description: "Screenshot from the start of the training", required: true },
+          { type: 11, name: "ending_screenshot", description: "Screenshot from the end of the training", required: true },
+          { type: 3, name: "notes", description: "Any additional notes", required: false },
+          { type: 11, name: "proof", description: "Any additional proof (screenshot/image/file)", required: false },
+        ],
       },
     ];
 
