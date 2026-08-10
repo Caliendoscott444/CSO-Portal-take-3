@@ -6,9 +6,9 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "obscenity": "^0.4.3",
+    "discord.js": "^14.27.0",
+    "dotenv": "^16.4.5",
     "naughty-words": "^1.2.0",
-    "dotenv": "^16.4.5"
+    "obscenity": "^0.4.3"
   }
 }

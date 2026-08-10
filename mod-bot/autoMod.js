@@ -32,7 +32,7 @@ const CONFIG = {
   TIMEOUT_DURATION_MS: 5 * 60 * 1000, // 5 minutes
 
   // Shown as a "Notes" line under the Reason, only for timeouts.
-  TIMEOUT_NOTES: 'Rule 2 https://discord.com/channels/1462468082931990551/1467570396986609704',
+  TIMEOUT_NOTES: 'Rule 3 https://discord.com/channels/1462468082931990551/1467570396986609704',
 
   // If true, sends each message to Google's Gemini API (free, no credit
   // card — via Google AI Studio) for smarter multilingual curse/slur
@@ -61,6 +61,13 @@ const CONFIG = {
   // Leave it empty and nothing will ever be banned for word content.
   CUSTOM_SLUR_WORDS: [
     'fag',
+  ],
+
+  // Words that should NEVER be flagged as profanity, even though obscenity's
+  // built-in dataset or the naughty-words lists include them. Add more here
+  // as false positives come up.
+  ALLOWLIST_WORDS: [
+    'bj',
   ],
 
   // Domains that count as an NSFW link (extend as needed)
@@ -96,8 +103,12 @@ function getNextCaseNumber() {
 // ---------------------------------------------------------------------------
 // Word matcher setup (obscenity handles the curse/slur dictionary for us)
 // ---------------------------------------------------------------------------
+const filteredEnglishDataset = englishDataset.removePhrasesIf((phrase) =>
+  CONFIG.ALLOWLIST_WORDS.includes((phrase.metadata?.originalWord ?? '').toLowerCase())
+);
+
 const matcher = new RegExpMatcher({
-  ...englishDataset.build(),
+  ...filteredEnglishDataset.build(),
   ...englishRecommendedTransformers,
 });
 
@@ -112,6 +123,9 @@ for (const lang of CONFIG.MULTILINGUAL_CURSE_LANGUAGES) {
     continue;
   }
   for (const w of list) multilingualCurseWords.add(w.toLowerCase());
+}
+for (const w of CONFIG.ALLOWLIST_WORDS) {
+  multilingualCurseWords.delete(w.toLowerCase());
 }
 
 // These word lists don't distinguish slurs from general profanity, so they
