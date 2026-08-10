@@ -14,15 +14,31 @@
  * Get a key at: https://aistudio.google.com/apikey (sign in with a Google
  * account, click "Create API key" — no billing setup involved).
  */
-
 const GEMINI_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent';
+
+// Words/abbreviations that should NEVER be flagged, regardless of what the
+// model says — these are ambiguous (initials, gaming terms, names, etc.)
+// and shouldn't get someone actioned on a false positive.
+// Match is case-insensitive and whole-word only (won't match inside other words).
+const ALLOWLIST = ['bj'];
+
+function isAllowlisted(content) {
+  const lower = content.toLowerCase();
+  return ALLOWLIST.some((word) => {
+    const re = new RegExp(`\\b${word}\\b`, 'i');
+    return re.test(lower);
+  });
+}
 
 const SYSTEM_PROMPT = `You are a Discord moderation classifier. You will be given a single chat message, which may be in ANY language. Decide whether it contains:
 - "curse": general profanity/swearing, in any language (not just English)
 - "slur": a slur or targeted hateful/dehumanizing term directed at a person or group, in any language
+Interpret the message regardless of what language it's in. A message can be neither, one, or both.
 
-Interpret the message regardless of what language it's in. A message can be neither, one, or both. Respond with ONLY a JSON object, no other text, no markdown formatting, in this exact form:
+The following terms are explicitly NOT to be treated as profanity or slurs under any circumstances, even in combination with other words: ${ALLOWLIST.join(', ')}. If the message consists only of allowlisted terms plus otherwise-clean text, respond false/false.
+
+Respond with ONLY a JSON object, no other text, no markdown formatting, in this exact form:
 {"curse": true or false, "slur": true or false}`;
 
 /**
@@ -65,10 +81,19 @@ async function classifyWithAI(content) {
     const cleaned = text.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(cleaned);
 
-    return {
+    let result = {
       curse: Boolean(parsed.curse),
       slur: Boolean(parsed.slur),
     };
+
+    // Hard override: if the message is on the allowlist, force clean —
+    // this runs regardless of what the model returned, so a model mistake
+    // can't cause a false positive on these terms.
+    if (isAllowlisted(content)) {
+      result = { curse: false, slur: false };
+    }
+
+    return result;
   } catch (err) {
     console.error('AI classification failed:', err);
     return null; // caller should fall back to keyword-based detection
