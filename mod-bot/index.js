@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, AuditLogEvent } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 const { handleAutoMod } = require('./autoMod');
+const { saveRolesOnLeave, buildRestoreButton, handleRestoreButton } = require('./roleBackup');
 
 const client = new Client({
   intents: [
@@ -54,6 +55,16 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 // ---------------------------------------------------------------------------
 client.on('guildMemberRemove', async (member) => {
   try {
+    saveRolesOnLeave(member);
+
+    const restoreLogChannel = await client.channels.fetch(UNIVERSAL_MOD_LOG_CHANNEL_ID).catch(() => null);
+    if (restoreLogChannel) {
+      await restoreLogChannel.send({
+        content: `**${member.user.tag}** left or was removed from the server. Their roles were saved.`,
+        components: [buildRestoreButton(member.id)],
+      }).catch(() => {});
+    }
+
     if (!member.roles.cache.has(AUTO_BLACKLIST_ON_LEAVE_ROLE_ID)) return;
 
     await supabase.from('cases').insert({
@@ -364,6 +375,9 @@ async function handlePrefixCommand(message) {
   return false;
 }
 
+client.on('interactionCreate', async (interaction) => {
+  await handleRestoreButton(interaction);
+});
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
