@@ -32,6 +32,7 @@ const SERVER_NAME = '\u2728 | Comet Strategic Operations Corporation';
 const TC_ALLOWED_ROLE_ID = '1517739789816828024';
 const BLACKLIST_ROLE_ID = '1462501582062092329';
 const AUTO_BLACKLIST_ON_LEAVE_ROLE_ID = '1462500854253883455';
+const ROLE_LOG_CHANNEL_ID = '1536574655618621490';
 
 // Same keep-list /punish uses for "Under Investigation" — everything else
 // gets stripped when the blacklist role is applied.
@@ -107,6 +108,14 @@ client.on('guildMemberAdd', async (member) => {
     console.log(`[blacklist] re-applied blacklist role to ${member.id} on rejoin (case #${activeBlacklist.id})`);
   } catch (err) {
     console.error('[blacklist] guildMemberAdd error:', err);
+  }
+});
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  try {
+    const logChannel = await client.channels.fetch(ROLE_LOG_CHANNEL_ID).catch(() => null);
+    await logRoleChanges(oldMember, newMember, logChannel);
+  } catch (err) {
+    console.error('[role log] guildMemberUpdate error:', err);
   }
 });
 
@@ -390,5 +399,8 @@ client.on('messageCreate', async (message) => {
 
   handleAutoMod(message);
 });
-
+client.on('interactionCreate', async (interaction) => {
+  if (await handleRestoreButton(interaction)) return;
+  if (await handleRoleChangeButton(interaction)) return;
+});
 client.login(process.env.DISCORD_TOKEN);
