@@ -43,6 +43,9 @@ const BLACKLIST_LOG_CHANNEL_ID = "1535819631212765214";
 const TICKET_CATEGORY_ID = "1462489110659993721";
 const TICKET_TRANSCRIPT_CHANNEL_ID = "1462489107883364465";
 const TICKET_PING_EXTRA_ROLE_ID = "1462490581291761841";
+// Only the claimer and members of this role may send messages in a ticket
+// once it's been claimed — everyone else is muted (but can still view it).
+const TICKET_CLAIM_LOCK_ROLE_ID = "1530325162560458752";
 const TICKET_CATEGORIES: Record<string, { label: string; roleIds: string[]; welcomeIntro: string; color: number; categoryName: string }> = {
   management: {
     label: "CSO Management",
@@ -1174,6 +1177,78 @@ Deno.serve(async (req) => {
     if (!putRes.ok) {
       throw new Error(`PUT permission overwrite failed (${putRes.status}): ${await putRes.text()}`);
     }
+  }
+
+  // Sets the SEND_MESSAGES bit (allow or deny) on a single overwrite while
+  // preserving every other bit already set on it. targetType: 0 = role,
+  // 1 = member. Used by lockTicketChannel/unlockTicketChannel below.
+  async function setSendMessagesOverwrite(
+    channelId: string,
+    targetId: string,
+    targetType: 0 | 1,
+    mode: "allow" | "deny",
+    existingOverwrite?: { allow: string; deny: string },
+  ) {
+    const SEND_MESSAGES_BIT = 2048n; // 1 << 11
+    let allow = existingOverwrite ? BigInt(existingOverwrite.allow) : 0n;
+    let deny = existingOverwrite ? BigInt(existingOverwrite.deny) : 0n;
+
+    if (mode === "allow") {
+      allow |= SEND_MESSAGES_BIT;
+      deny &= ~SEND_MESSAGES_BIT;
+    } else {
+      deny |= SEND_MESSAGES_BIT;
+      allow &= ~SEND_MESSAGES_BIT;
+    }
+
+    const res = await discordApi(`/channels/${channelId}/permissions/${targetId}`, {
+      method: "PUT",
+      body: JSON.stringify({ type: targetType, allow: allow.toString(), deny: deny.toString() }),
+    });
+    if (!res.ok) {
+      throw new Error(`PUT permission overwrite failed for ${targetId} (${res.status}): ${await res.text()}`);
+    }
+  }
+
+  // Mutes every existing role/member overwrite on the ticket channel except
+  // the claimer and TICKET_CLAIM_LOCK_ROLE_ID — VIEW_CHANNEL is left alone
+  // (so the channel doesn't disappear for anyone), only SEND_MESSAGES is
+  // denied. Called when a ticket is claimed.
+  async function lockTicketChannel(channelId: string, claimerId: string, allowedRoleId: string) {
+    const chRes = await discordApi(`/channels/${channelId}`);
+    if (!chRes.ok) throw new Error(`GET channel failed (${chRes.status}): ${await chRes.text()}`);
+    const channel = await chRes.json();
+    const overwrites: any[] = channel.permission_overwrites || [];
+
+    for (const ow of overwrites) {
+      if (ow.id === channel.guild_id) continue; // @everyone already can't view/send
+      if (ow.id === allowedRoleId || ow.id === claimerId) continue;
+      await setSendMessagesOverwrite(channelId, ow.id, ow.type, "deny", ow);
+    }
+
+    const roleOverwrite = overwrites.find((o: any) => o.id === allowedRoleId);
+    await setSendMessagesOverwrite(channelId, allowedRoleId, 0, "allow", roleOverwrite);
+
+    const claimerOverwrite = overwrites.find((o: any) => o.id === claimerId);
+    await setSendMessagesOverwrite(channelId, claimerId, 1, "allow", claimerOverwrite);
+  }
+
+  // Restores normal ticket permissions — re-allows SEND_MESSAGES for the
+  // ticket's staff roles, ping role, and opener. Called when a ticket is
+  // unclaimed.
+  async function unlockTicketChannel(channelId: string, roleIdsToRestore: string[], openerId: string) {
+    const chRes = await discordApi(`/channels/${channelId}`);
+    if (!chRes.ok) throw new Error(`GET channel failed (${chRes.status}): ${await chRes.text()}`);
+    const channel = await chRes.json();
+    const overwrites: any[] = channel.permission_overwrites || [];
+
+    for (const roleId of roleIdsToRestore) {
+      const existing = overwrites.find((o: any) => o.id === roleId);
+      await setSendMessagesOverwrite(channelId, roleId, 0, "allow", existing);
+    }
+
+    const openerOverwrite = overwrites.find((o: any) => o.id === openerId);
+    await setSendMessagesOverwrite(channelId, openerId, 1, "allow", openerOverwrite);
   }
 
   function moderationDMMessage(caseId: number, actionPhrase: string, reason: string): string {
@@ -3518,6 +3593,20 @@ if (commandName === "claim") {
         );
       }
       await supabase.from("tickets").update({ claimed_by: discordUserId }).eq("id", ticket.id);
+
+      try {
+        await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID);
+      } catch (err) {
+        console.error("[/claim] lockTicketChannel failed:", err);
+      }
+
+      await discordApi(`/channels/${body.channel_id}/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}> and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
+        }),
+      }).catch(() => {});
+
       return new Response(
         JSON.stringify({ type: 4, data: { content: `<@${discordUserId}> has claimed this ticket.` } }),
         { headers: { "Content-Type": "application/json" } },
@@ -3544,6 +3633,20 @@ if (commandName === "claim") {
         );
       }
       await supabase.from("tickets").update({ claimed_by: null }).eq("id", ticket.id);
+
+      try {
+        const cfg = TICKET_CATEGORIES[ticket.category];
+        const rolesToRestore = cfg ? [...cfg.roleIds, TICKET_PING_EXTRA_ROLE_ID] : [TICKET_PING_EXTRA_ROLE_ID];
+        await unlockTicketChannel(body.channel_id, rolesToRestore, ticket.opener_id);
+      } catch (err) {
+        console.error("[/unclaim] unlockTicketChannel failed:", err);
+      }
+
+      await discordApi(`/channels/${body.channel_id}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ content: `\uD83D\uDD13 This ticket has been unclaimed by <@${discordUserId}>. Everyone with access can talk again.` }),
+      }).catch(() => {});
+
       return new Response(
         JSON.stringify({ type: 4, data: { content: `<@${discordUserId}> has unclaimed this ticket.` } }),
         { headers: { "Content-Type": "application/json" } },
@@ -3670,13 +3773,26 @@ if (commandName === "claim") {
         );
       }
       const removeUserId: string = body.data.options?.find((o: any) => o.name === "member")?.value;
+      const VIEW_CHANNEL = 1024n;
+      const SEND_MESSAGES = 2048n;
+      // Explicitly deny (rather than delete the overwrite) — a member-specific
+      // overwrite always wins over any role-level overwrite in Discord's
+      // permission resolution, so this removes access even if the user can
+      // also see/talk in the channel via a staff/ping role.
       const removeRes = await discordApi(`/channels/${body.channel_id}/permissions/${removeUserId}`, {
-        method: "DELETE",
+        method: "PUT",
+        body: JSON.stringify({ type: 1, allow: "0", deny: (VIEW_CHANNEL | SEND_MESSAGES).toString() }),
       });
+      const removeErrText = removeRes.ok ? null : await removeRes.text().catch(() => "");
+      if (!removeRes.ok) console.error(`[/remove] PUT permission overwrite failed (${removeRes.status}):`, removeErrText);
       return new Response(
         JSON.stringify({
           type: 4,
-          data: { content: removeRes.ok ? `<@${removeUserId}> has been removed from this ticket.` : "Couldn't remove that member — check my permissions." },
+          data: {
+            content: removeRes.ok
+              ? `<@${removeUserId}> has been removed from this ticket.`
+              : `Couldn't remove that member — check my permissions.\n\`\`\`${(removeErrText ?? "").slice(0, 500)}\`\`\``,
+          },
         }),
         { headers: { "Content-Type": "application/json" } },
       );
@@ -3979,6 +4095,19 @@ if (customId.startsWith("ticket_open_")) {
       }
 
       await supabase.from("tickets").update({ claimed_by: discordUserId }).eq("id", ticket.id);
+
+      try {
+        await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID);
+      } catch (err) {
+        console.error("[ticket_claim] lockTicketChannel failed:", err);
+      }
+
+      await discordApi(`/channels/${body.channel_id}/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}> and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
+        }),
+      }).catch(() => {});
 
       const existingEmbed = body.message?.embeds?.[0] ?? {};
       const updatedEmbed = { ...existingEmbed, footer: { text: `Claimed by ${reviewerName}` } };
