@@ -3615,6 +3615,10 @@ if (commandName === "claim") {
         method: "POST",
         body: JSON.stringify({
           content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}>, the ticket opener, and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
+          // Role still shows as a tag in the text, but won't trigger a
+          // notification ping for Command Staff members — only the
+          // claimer/opener user mentions actually notify.
+          allowed_mentions: { parse: [], users: [discordUserId, ticket.opener_id].filter(Boolean), roles: [] },
         }),
       }).catch(() => {});
 
@@ -4105,39 +4109,106 @@ if (customId.startsWith("ticket_open_")) {
         );
       }
 
-      await supabase.from("tickets").update({ claimed_by: discordUserId }).eq("id", ticket.id);
-
-      try {
-        await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID, ticket.opener_id);
-      } catch (err) {
-        console.error("[ticket_claim] lockTicketChannel failed:", err);
+      if (ticket.claimed_by && ticket.claimed_by !== discordUserId) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: `This ticket is already claimed by <@${ticket.claimed_by}>. Only they can unclaim it.`, flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      await discordApi(`/channels/${body.channel_id}/messages`, {
-        method: "POST",
-        body: JSON.stringify({
-          content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}>, the ticket opener, and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
-        }),
-      }).catch(() => {});
+      const applicationId = body.application_id;
+      const interactionToken = body.token;
+      const wasClaimed = !!ticket.claimed_by;
 
-      const existingEmbed = body.message?.embeds?.[0] ?? {};
-      const updatedEmbed = { ...existingEmbed, footer: { text: `Claimed by ${reviewerName}` } };
+      // Slow — GETs the channel then does several PUT permission-overwrite
+      // calls, easily over Discord's 3s interaction timeout, which was
+      // causing "interaction failed" -> the user re-clicking -> duplicate
+      // claim messages. Deferring (type 6) + editing the original message
+      // afterward avoids that entirely.
+      const task = (async () => {
+        // Atomic guard: only flips claimed_by if it still matches the state
+        // we checked above. If two clicks/retries race, only one of them
+        // actually changes the row, so only one posts an announcement.
+        const { data: updatedRows } = wasClaimed
+          ? await supabase
+              .from("tickets")
+              .update({ claimed_by: null })
+              .eq("id", ticket.id)
+              .eq("claimed_by", discordUserId)
+              .select()
+          : await supabase
+              .from("tickets")
+              .update({ claimed_by: discordUserId })
+              .eq("id", ticket.id)
+              .is("claimed_by", null)
+              .select();
 
-      const existingComponents = body.message?.components ?? [];
-      const updatedComponents = existingComponents.map((row: any) => ({
-        ...row,
-        components: row.components.map((c: any) =>
-          c.custom_id === "ticket_claim" ? { ...c, disabled: true } : c,
-        ),
-      }));
+        if (!updatedRows || updatedRows.length === 0) {
+          // Someone else's click already changed the state — do nothing,
+          // this duplicate click is a no-op.
+          return;
+        }
 
-      return new Response(
-        JSON.stringify({
-          type: 7,
-          data: { embeds: [updatedEmbed], components: updatedComponents },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
+        const existingEmbed = body.message?.embeds?.[0] ?? {};
+
+        if (wasClaimed) {
+          try {
+            const rolesToRestore = [...cfg.roleIds, TICKET_PING_EXTRA_ROLE_ID];
+            await unlockTicketChannel(body.channel_id, rolesToRestore, ticket.opener_id);
+          } catch (err) {
+            console.error("[ticket_claim] unlockTicketChannel failed:", err);
+          }
+
+          await discordApi(`/channels/${body.channel_id}/messages`, {
+            method: "POST",
+            body: JSON.stringify({
+              content: `\uD83D\uDD13 This ticket has been unclaimed by <@${discordUserId}>. Everyone with access can talk again.`,
+            }),
+          }).catch(() => {});
+
+          const { footer, ...embedWithoutFooter } = existingEmbed;
+          await editOriginalInteractionResponse(applicationId, interactionToken, {
+            embeds: [embedWithoutFooter],
+            components: body.message?.components ?? [],
+          });
+        } else {
+          try {
+            await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID, ticket.opener_id);
+          } catch (err) {
+            console.error("[ticket_claim] lockTicketChannel failed:", err);
+          }
+
+          await discordApi(`/channels/${body.channel_id}/messages`, {
+            method: "POST",
+            body: JSON.stringify({
+              content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}>, the ticket opener, and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
+              // Role still shows as a tag in the text, but won't trigger a
+              // notification ping for Command Staff members — only the
+              // claimer/opener user mentions actually notify.
+              allowed_mentions: { parse: [], users: [discordUserId, ticket.opener_id].filter(Boolean), roles: [] },
+            }),
+          }).catch(() => {});
+
+          const updatedEmbed = { ...existingEmbed, footer: { text: `Claimed by ${reviewerName}` } };
+          await editOriginalInteractionResponse(applicationId, interactionToken, {
+            embeds: [updatedEmbed],
+            components: body.message?.components ?? [],
+          });
+        }
+      })();
+
+      // @ts-ignore - EdgeRuntime is provided by the Supabase Edge Functions runtime
+      if (typeof EdgeRuntime !== "undefined") {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(task);
+      }
+
+      return new Response(JSON.stringify({ type: 6 }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
    // --- Ticket system: edit close reason ---
