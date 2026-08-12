@@ -31,7 +31,7 @@ const CONFIG = {
   TIMEOUT_DURATION_MS: 5 * 60 * 1000, // 5 minutes
 
   // Shown as a "Notes" line under the Reason, only for timeouts.
-  TIMEOUT_NOTES: 'Rule 3 https://discord.com/channels/1462468082931990551/1467570396986609704',
+  TIMEOUT_NOTES: 'Rule 2 https://discord.com/channels/1462468082931990551/1467570396986609704',
 
   // Multilingual profanity detection — fully local/offline, no external
   // API and no possibility of billing. Uses the open-source `naughty-words`
@@ -51,7 +51,7 @@ const CONFIG = {
   // collide with a profanity entry in another language (a known trade-off
   // of word-list-based filtering called out above). Match is whole-word,
   // case-insensitive.
-  ALLOWLIST_WORDS: ['am','bj'],
+  ALLOWLIST_WORDS: ['am'],
 
   // REQUIRED for the ban tier to work: list the words that should trigger
   // an instant ban here. These word lists only cover general profanity

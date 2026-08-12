@@ -20,6 +20,7 @@ const {
   englishRecommendedTransformers,
 } = require('obscenity');
 const naughtyWords = require('naughty-words');
+const { classifyWithAI } = require('./aiModerator');
 
 // ---------------------------------------------------------------------------
 // CONFIG — fill these in for your server
@@ -32,6 +33,13 @@ const CONFIG = {
 
   // Shown as a "Notes" line under the Reason, only for timeouts.
   TIMEOUT_NOTES: 'Rule 3 https://discord.com/channels/1462468082931990551/1467570396986609704',
+
+  // If true, sends each message to Google's Gemini API (free, no credit
+  // card — via Google AI Studio) for smarter multilingual curse/slur
+  // detection that understands context, not just exact word matches.
+  // Requires GEMINI_API_KEY in .env. Falls back to the local word lists
+  // below if the API call fails or you hit the free daily/rate limit.
+  USE_AI_MODERATION: true,
 
   // Multilingual profanity detection — fully local/offline, no external
   // API and no possibility of billing. Uses the open-source `naughty-words`
@@ -46,13 +54,6 @@ const CONFIG = {
     'pl', 'pt', 'ru', 'sv', 'th', 'tlh', 'tr', 'zh',
   ],
 
-  // Words that should NEVER trigger the profanity/curse timeout, no matter
-  // what the word lists say — useful for short, common words that happen to
-  // collide with a profanity entry in another language (a known trade-off
-  // of word-list-based filtering called out above). Match is whole-word,
-  // case-insensitive.
-  ALLOWLIST_WORDS: ['am','bj'],
-
   // REQUIRED for the ban tier to work: list the words that should trigger
   // an instant ban here. These word lists only cover general profanity
   // (timeout tier) and have no separate slur category, so this array is
@@ -60,6 +61,13 @@ const CONFIG = {
   // Leave it empty and nothing will ever be banned for word content.
   CUSTOM_SLUR_WORDS: [
     'fag',
+  ],
+
+  // Words that should NEVER be flagged as profanity, even though obscenity's
+  // built-in dataset or the naughty-words lists include them. Add more here
+  // as false positives come up.
+  ALLOWLIST_WORDS: [
+    'bj',
   ],
 
   // Domains that count as an NSFW link (extend as needed)
@@ -95,8 +103,12 @@ function getNextCaseNumber() {
 // ---------------------------------------------------------------------------
 // Word matcher setup (obscenity handles the curse/slur dictionary for us)
 // ---------------------------------------------------------------------------
+const filteredEnglishDataset = englishDataset.removePhrasesIf((phrase) =>
+  CONFIG.ALLOWLIST_WORDS.includes((phrase.metadata?.originalWord ?? '').toLowerCase())
+);
+
 const matcher = new RegExpMatcher({
-  ...englishDataset.build(),
+  ...filteredEnglishDataset.build(),
   ...englishRecommendedTransformers,
 });
 
@@ -112,6 +124,9 @@ for (const lang of CONFIG.MULTILINGUAL_CURSE_LANGUAGES) {
   }
   for (const w of list) multilingualCurseWords.add(w.toLowerCase());
 }
+for (const w of CONFIG.ALLOWLIST_WORDS) {
+  multilingualCurseWords.delete(w.toLowerCase());
+}
 
 // These word lists don't distinguish slurs from general profanity, so they
 // only ever contribute to the curse/timeout tier. Slurs still rely on
@@ -121,17 +136,10 @@ function classifyMessageContent(content) {
     containsWord(content, w)
   );
 
-  const isAllowlistedWord = (w) =>
-    CONFIG.ALLOWLIST_WORDS.some((allowed) => allowed.toLowerCase() === w.toLowerCase());
-
-  const hasEnglishProfanity = matcher.getAllMatches(content).some((m) => {
-    const matchedText = content.slice(m.startIndex, m.endIndex + 1);
-    return !isAllowlistedWord(matchedText);
-  });
+  const hasEnglishProfanity = matcher.getAllMatches(content).length > 0;
 
   let hasMultilingualProfanity = false;
   for (const w of multilingualCurseWords) {
-    if (isAllowlistedWord(w)) continue;
     if (containsWord(content, w)) {
       hasMultilingualProfanity = true;
       break;
@@ -313,13 +321,25 @@ async function handleAutoMod(message) {
   if (!member.moderatable) return;
 
   // Local keyword-based checks — obscenity (English) + naughty-words
-  // (other languages) + your CUSTOM_SLUR_WORDS. Fully offline, no
-  // external API calls.
+  // (other languages) + your CUSTOM_SLUR_WORDS. Always run first as a
+  // fast, free baseline that never depends on network access.
   const keywordResult = classifyMessageContent(message.content);
   const nsfwLink = isNsfwLink(message.content);
 
-  const isSlur = keywordResult.isSlur;
-  const isCurse = keywordResult.isCurse;
+  let isSlur = keywordResult.isSlur;
+  let isCurse = keywordResult.isCurse;
+
+  if (CONFIG.USE_AI_MODERATION) {
+    const aiResult = await classifyWithAI(message.content);
+    if (aiResult) {
+      // AI result adds to (never overrides) the keyword-based result, so
+      // nothing gets missed if the two disagree.
+      isSlur = isSlur || aiResult.slur;
+      isCurse = isCurse || aiResult.curse;
+    }
+    // If aiResult is null (API error, rate limit, missing key), we
+    // silently keep the keyword-based result above as a fallback.
+  }
 
   try {
     if (isSlur || nsfwLink) {

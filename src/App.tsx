@@ -25,6 +25,7 @@ import Ranks from './components/portal/Ranks';
 import Roster from './components/portal/Roster';
 import Admin from './components/portal/Admin';
 import SubDivisionsManager from './components/portal/SubDivisionsManager';
+import TranscriptView from './components/portal/TranscriptView';
 import Profile from './components/portal/Profile';
 import ComingSoon from './components/portal/ComingSoon';
 import Pictures from './components/portal/Pictures';
@@ -106,6 +107,7 @@ export default function App() {
           <Route path="/portal/media-manager" element={<Portal><MediaManager /></Portal>} />
           <Route path="/portal/admin" element={<Portal><Admin /></Portal>} />
           <Route path="/portal/admin/subdivisions" element={<Portal><SubDivisionsManager /></Portal>} />
+          <Route path="/portal/transcripts/:ticketId" element={<Portal><TranscriptView /></Portal>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

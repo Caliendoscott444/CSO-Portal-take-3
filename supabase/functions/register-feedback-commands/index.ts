@@ -5,8 +5,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // guild-scoped slash command your bot has (shift, feedback, apply, loa, reaction_role,
 // amendment, revoke, edit_punishment, appeal, close_appeal_ticket, end_investigation,
 // view_cases, warn, kick, ban, unban, timeout, cases, edit_case, remove_case,
-// chain_of_command, punish, suggestions, personnel_suggestions, report, management_ticket,
-// inquiry_ticket, close_ticket, and any future ones) —
+// chain_of_command, punish, suggestions, personnel_suggestions, claim, unclaim, close,
+// close_request, transfer, add, remove, rename, open, ticket_blacklist, and any future ones) —
 // never run a registration script that only lists a subset, or it will silently delete
 // the commands that were left out.
 
@@ -137,42 +137,6 @@ Deno.serve(async (_req) => {
       {
         name: "close_appeal_ticket",
         description: "Close the current appeal ticket and log it",
-      },
-      {
-        name: "report",
-        description: "Report a member to staff",
-        options: [
-          { type: 6, name: "member", description: "Who are you reporting?", required: true },
-          { type: 3, name: "reason", description: "Why are you reporting them?", required: true },
-          {
-            type: 3,
-            name: "proof",
-            description: "Do you have proof?",
-            required: true,
-            choices: [
-              { name: "Yes", value: "yes" },
-              { name: "No", value: "no" },
-            ],
-          },
-        ],
-      },
-      {
-        name: "management_ticket",
-        description: "Open a management ticket",
-        options: [
-          { type: 3, name: "reason", description: "Why are you opening this ticket?", required: true },
-        ],
-      },
-      {
-        name: "inquiry_ticket",
-        description: "Open an inquiry / support ticket",
-        options: [
-          { type: 3, name: "reason", description: "Why are you opening this ticket?", required: true },
-        ],
-      },
-      {
-        name: "close_ticket",
-        description: "Close the current report, management, or inquiry ticket and log it",
       },
       {
         name: "end_investigation",
@@ -364,6 +328,144 @@ Deno.serve(async (_req) => {
           { type: 11, name: "ending_screenshot", description: "Screenshot from the end of the training", required: true },
           { type: 3, name: "notes", description: "Any additional notes", required: false },
           { type: 11, name: "proof", description: "Any additional proof (screenshot/image/file)", required: false },
+        ],
+      },
+      {
+        name: "lock",
+        description: "Lock this channel so only the permitted role can send messages",
+      },
+      {
+        name: "unlock",
+        description: "Unlock this channel so everyone can send messages again",
+      },
+      {
+        name: "tc",
+        description: "Announce a Topic Change",
+      },
+      {
+        name: "blacklist",
+        description: "Blacklist management",
+        options: [
+          {
+            type: 1, // SUB_COMMAND
+            name: "issue",
+            description: "Blacklist a member",
+            options: [
+              { type: 6, name: "member", description: "The member to blacklist", required: true },
+              { type: 3, name: "reason", description: "Why this member is being blacklisted", required: true },
+            ],
+          },
+          {
+            type: 1, // SUB_COMMAND
+            name: "appeal",
+            description: "Open a blacklist appeal ticket",
+            options: [
+              { type: 3, name: "reason", description: "Why should your blacklist be lifted?", required: true },
+            ],
+          },
+        ],
+      },
+      {
+        name: "force_end_shift",
+        description: "Force-end another member's active shift",
+        options: [
+          {
+            type: 3,
+            name: "member",
+            description: "Who to force-end shift for",
+            required: true,
+            autocomplete: true,
+          },
+        ],
+      },
+    {
+        name: "ticket_panel",
+        description: "Post the ticket support panel in this channel",
+      },
+      {
+        name: "claim",
+        description: "Claim the current ticket",
+      },
+      {
+        name: "unclaim",
+        description: "Unclaim the current ticket",
+      },
+      {
+        name: "close",
+        description: "Close the current ticket",
+        options: [
+          { type: 3, name: "reason", description: "Reason for closing", required: false },
+        ],
+      },
+      {
+        name: "close_request",
+        description: "Ask the ticket opener to confirm closing this ticket",
+        options: [
+          { type: 3, name: "reason", description: "Reason for closing", required: false },
+        ],
+      },
+      {
+        name: "transfer",
+        description: "Transfer this ticket's claim to another staff member",
+        options: [
+          { type: 6, name: "member", description: "Staff member to transfer the ticket to", required: true },
+        ],
+      },
+      {
+        name: "add",
+        description: "Add a member to this ticket",
+        options: [
+          { type: 6, name: "member", description: "Member to add", required: true },
+        ],
+      },
+      {
+        name: "remove",
+        description: "Remove a member from this ticket",
+        options: [
+          { type: 6, name: "member", description: "Member to remove", required: true },
+        ],
+      },
+      {
+        name: "rename",
+        description: "Rename this ticket channel",
+        options: [
+          { type: 3, name: "name", description: "New channel name", required: true },
+        ],
+      },
+      {
+        name: "open",
+        description: "Open a ticket on behalf of a member",
+        options: [
+          { type: 6, name: "member", description: "Member to open the ticket for", required: true },
+          {
+            type: 3,
+            name: "category",
+            description: "Ticket category",
+            required: false,
+            choices: [
+              { name: "CSO Management", value: "management" },
+              { name: "Report Ticket", value: "report" },
+              { name: "Inquiry Support", value: "inquiry" },
+            ],
+          },
+        ],
+      },
+      {
+        name: "ticket_blacklist",
+        description: "Blacklist or unblacklist a member from opening tickets",
+        options: [
+          { type: 6, name: "member", description: "The member", required: true },
+          {
+            type: 3,
+            name: "action",
+            description: "Add or remove from the ticket blacklist",
+            required: true,
+            choices: [
+              { name: "Add", value: "add" },
+              { name: "Remove", value: "remove" },
+            ],
+          },
+          { type: 3, name: "reason", description: "Reason (used when adding)", required: false },
         ],
       },
     ];

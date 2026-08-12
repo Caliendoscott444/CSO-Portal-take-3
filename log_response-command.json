@@ -1,0 +1,57 @@
+{
+  "name": "log_response",
+  "description": "Log a response: who you responded to, who you responded with, and what happened",
+  "type": 1,
+  "default_member_permissions": "0",
+  "options": [
+    {
+      "name": "client",
+      "description": "Who/what you responded to (client name, site, or address)",
+      "type": 3,
+      "required": true
+    },
+    {
+      "name": "type",
+      "description": "Type of response",
+      "type": 3,
+      "required": true,
+      "choices": [
+        { "name": "Alarm Activation", "value": "alarm_activation" },
+        { "name": "Panic Button", "value": "panic_button" },
+        { "name": "Patrol Check", "value": "patrol_check" },
+        { "name": "Follow-up", "value": "follow_up" },
+        { "name": "Other", "value": "other" }
+      ]
+    },
+    {
+      "name": "outcome",
+      "description": "Outcome of the response",
+      "type": 3,
+      "required": true,
+      "choices": [
+        { "name": "Resolved", "value": "resolved" },
+        { "name": "Escalated", "value": "escalated" },
+        { "name": "False Alarm", "value": "false_alarm" },
+        { "name": "Handed to SAPS/Police", "value": "handed_to_police" }
+      ]
+    },
+    {
+      "name": "summary",
+      "description": "What happened / actions taken",
+      "type": 3,
+      "required": true
+    },
+    {
+      "name": "partner",
+      "description": "Member you responded with (mention them)",
+      "type": 6,
+      "required": false
+    },
+    {
+      "name": "partner2",
+      "description": "Additional member you responded with (mention them)",
+      "type": 6,
+      "required": false
+    }
+  ]
+}

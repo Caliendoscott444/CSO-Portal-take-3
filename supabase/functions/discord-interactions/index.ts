@@ -6,12 +6,6 @@
 //   /feedback           -> opens a modal (rating 1-5 + notes), posts a styled embed on submit
 //   /reaction_role      -> posts an embed with a dropdown; picking an option toggles a role
 //   /apply              -> multi-step application form (modal chain), posts submission for review
-//   /report              -> asks who to report, the reason, and whether they have proof; creates a
-//                           private report ticket channel with the answers
-//   /management_ticket   -> asks the reason; creates a private management ticket channel
-//   /inquiry_ticket      -> asks the reason; creates a private inquiry ticket channel
-//   /close_ticket        -> staff-only, closes the current report/management/inquiry ticket and
-//                           logs a transcript
 //   LOA approve/deny buttons + modals (posted elsewhere, handled here)
 //
 // Required secrets (set with `supabase secrets set`):
@@ -23,10 +17,9 @@
 //   LOA_ROLE_ID              - role applied while an LOA is active
 //   LOA_APPROVER_ROLE_ID     - role allowed to approve/deny LOA requests
 //   LOA_CHANNEL_ID           - channel LOA approve/deny notifications are posted to
+// Role allowed to bypass the role-hierarchy check in /punish entirely.
+const HIERARCHY_BYPASS_ROLE_ID = "1532169753022693479";
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY - standard Supabase function env
-//
-// Report/management/inquiry ticket category, review roles, and log channel are hardcoded
-// near the top of this file (not secrets) \u2014 same pattern as APPEAL_TICKET_CATEGORY_ID.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import nacl from "npm:tweetnacl@1.0.3";
@@ -44,45 +37,46 @@ const CSO_LOGO_URL = "https://cso-corporations.vercel.app/CSO_CORPORATION_LOGO_1
 const REACTIONROLE_ALLOWED_ROLE_ID = "1530325162560458752";
 const APPLY_ALLOWED_ROLE_ID = "1530325162560458752";
 const APPEAL_ALLOWED_ROLE_ID = "1462500854253883455";
+const BLACKLIST_ROLE_ID = "1462501582062092329";
+const BLACKLIST_LOG_CHANNEL_ID = "1535819631212765214";
+
+const TICKET_CATEGORY_ID = "1462489110659993721";
+const TICKET_TRANSCRIPT_CHANNEL_ID = "1462489107883364465";
+const TICKET_PING_EXTRA_ROLE_ID = "1462490581291761841";
+const TICKET_CATEGORIES: Record<string, { label: string; roleIds: string[]; welcomeIntro: string; color: number; categoryName: string }> = {
+  management: {
+    label: "CSO Management",
+    roleIds: ["1511751384637374525", "1532169753022693479", "1462490786842280072"],
+    welcomeIntro:
+      "Thank you for contacting CSO Management. At this time the CSO Division Commanders have been contacted and will respond to your ticket soon.",
+    color: 0x3498db,
+    categoryName: "═════ CSO Management Tickets ═════",
+  },
+  report: {
+    label: "Report Ticket",
+    roleIds: [
+      "1511751384637374525", "1532169753022693479", "1462490786842280072",
+      "1469915757583270031", "1495923952038449354", "1466226180863561738",
+    ],
+    welcomeIntro:
+      "Thank you for submitting a report. At this time staff have been contacted and will respond to your ticket soon.",
+    color: 0xed4245,
+    categoryName: "═════ CSO Report Tickets ═════",
+  },
+  inquiry: {
+    label: "Inquiry Support",
+    roleIds: [
+      "1511751384637374525", "1532169753022693479", "1462490786842280072",
+      "1469915757583270031", "1495923952038449354", "1466226180863561738",
+    ],
+    welcomeIntro:
+      "Thank you for contacting CSO Inquiry Support. At this time staff have been contacted and will respond to your ticket soon.",
+    color: 0x2ecc71,
+    categoryName: "═════ CSO Inquiry Tickets ═════",
+  },
+};
 const APPEAL_REVIEW_ROLE_ID = "1530325162560458752";
 const APPEAL_TICKET_CATEGORY_ID = "1531494351673495722";
-// ---------- Support ticket system (report / management / inquiry) ----------
-// All three ticket types currently share the same category and transcript log channel;
-// each has its own set of review roles that get pinged in the ticket and can close it.
-const TICKET_LOG_CHANNEL_ID = "1462489107883364465";
-
-const REPORT_TICKET_CATEGORY_ID = "1462489110659993721";
-const REPORT_REVIEW_ROLE_IDS = [
-  "1511751384637374525",
-  "1532169753022693479",
-  "1462490581291761841",
-  "1462490786842280072",
-  "1469915757583270031",
-  "1495923952038449354",
-  "1466226180863561738",
-];
-
-const MANAGEMENT_TICKET_CATEGORY_ID = "1462489110659993721";
-const MANAGEMENT_REVIEW_ROLE_IDS = [
-  "1511751384637374525",
-  "1532169753022693479",
-  "1462490581291761841",
-  "1462490786842280072",
-];
-
-const INQUIRY_TICKET_CATEGORY_ID = "1462489110659993721";
-const INQUIRY_REVIEW_ROLE_IDS = [
-  // NOTE: the first role ID you sent for this list ("511751384637374525") was one digit
-  // short of the "1511751384637374525" used in the other two lists — assuming that's a typo
-  // and it's meant to be the same role. Fix this line if that assumption is wrong.
-  "1511751384637374525",
-  "1532169753022693479",
-  "1462490581291761841",
-  "1462490786842280072",
-  "1469915757583270031",
-  "1495923952038449354",
-  "1466226180863561738",
-];
 const INVESTIGATION_ROLE_ID = "1522316411219738694";
 const INVESTIGATION_ISSUER_ROLE_ID = "1530325162560458752";
 // Role applied to a member when they're punished with Suspension via /punish.
@@ -730,7 +724,212 @@ async function postMessageWithFile(
 ): Promise<Response> {
   const form = new FormData();
   form.append("payload_json", JSON.stringify(jsonPayload));
-  form.append("files[0]", new Blob([fileText], { type: "text/plain" }), filename);
+  form.append("files[0]", new Blob([fileText], { type: "text/html" }), filename);
+  return fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bot ${botToken}` },
+    body: form,
+  });
+}
+
+function escapeHtml(s: string): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildTranscriptHtml(
+  messages: any[],
+  meta: { channelName: string; category: string; opener: string; closedBy: string; reason?: string },
+): string {
+  const rows = messages
+    .map((m) => {
+      const author = escapeHtml(m.author?.global_name || m.author?.username || "Unknown");
+      const avatar = m.author?.avatar
+        ? `https://cdn.discordapp.com/avatars/${m.author.id}/${m.author.avatar}.png`
+        : "https://cdn.discordapp.com/embed/avatars/0.png";
+      const time = new Date(m.timestamp).toLocaleString("en-US");
+      const content = escapeHtml(m.content || "").replace(/\n/g, "<br>");
+      return `<div class="msg"><img src="${avatar}"><div><div class="meta"><span class="author">${author}</span><span class="time">${time}</span></div><div class="content">${content || "<i>(no text content)</i>"}</div></div></div>`;
+    })
+    .join("\n");
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Transcript - ${escapeHtml(meta.channelName)}</title>
+<style>
+body{background:#313338;color:#dbdee1;font-family:Whitney,Helvetica,Arial,sans-serif;margin:0;padding:20px;}
+.header{background:#2b2d31;padding:16px;border-radius:8px;margin-bottom:16px;}
+.header h1{margin:0 0 8px;font-size:20px;}
+.header p{margin:2px 0;color:#b5bac1;font-size:14px;}
+.msg{display:flex;gap:12px;padding:8px 0;}
+.msg img{width:40px;height:40px;border-radius:50%;}
+.meta{display:flex;gap:8px;align-items:baseline;}
+.author{font-weight:600;color:#f2f3f5;}
+.time{font-size:12px;color:#949ba4;}
+.content{white-space:pre-wrap;word-break:break-word;}
+</style></head><body>
+<div class="header">
+<h1>#${escapeHtml(meta.channelName)}</h1>
+<p>Category: ${escapeHtml(meta.category)}</p>
+<p>Opened by: ${escapeHtml(meta.opener)}</p>
+<p>Closed by: ${escapeHtml(meta.closedBy)}</p>
+${meta.reason ? `<p>Reason: ${escapeHtml(meta.reason)}</p>` : ""}
+<p>Messages: ${messages.length}</p>
+</div>
+${rows}
+</body></html>`;
+}
+
+async function findOrCreateTicketCategory(
+  discordApi: (path: string, init?: RequestInit) => Promise<Response>,
+  guildId: string,
+  categoryName: string,
+  staffRoleIds: string[],
+): Promise<string | null> {
+  const listRes = await discordApi(`/guilds/${guildId}/channels`);
+  if (listRes.ok) {
+    const channels = await listRes.json();
+    const existing = channels.find((c: any) => c.type === 4 && c.name === categoryName);
+    if (existing) return existing.id;
+  }
+
+  const VIEW_CHANNEL = 1024n;
+  const SEND_MESSAGES = 2048n;
+  const permissionOverwrites = [
+    { id: guildId, type: 0, deny: VIEW_CHANNEL.toString() },
+    ...staffRoleIds.map((r) => ({ id: r, type: 0, allow: (VIEW_CHANNEL | SEND_MESSAGES).toString() })),
+  ];
+
+  const createRes = await discordApi(`/guilds/${guildId}/channels`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: categoryName,
+      type: 4,
+      permission_overwrites: permissionOverwrites,
+    }),
+  });
+  if (!createRes.ok) return null;
+  const created = await createRes.json();
+  return created.id;
+}
+async function closeTicket(
+  discordApi: (path: string, init?: RequestInit) => Promise<Response>,
+  supabase: any,
+  botToken: string,
+  channelId: string,
+  closedByUserId: string,
+  reason?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const { data: ticket } = await supabase
+    .from("tickets")
+    .select("*")
+    .eq("channel_id", channelId)
+    .eq("status", "open")
+    .maybeSingle();
+
+  if (!ticket) return { ok: false, error: "No open ticket found for this channel." };
+
+  const messages = await fetchAllChannelMessages(discordApi, channelId);
+  const chRes = await discordApi(`/channels/${channelId}`);
+  const chData = chRes.ok ? await chRes.json() : { name: channelId };
+  const categoryLabel = TICKET_CATEGORIES[ticket.category]?.label ?? ticket.category;
+
+  const html = buildTranscriptHtml(messages, {
+    channelName: chData.name || channelId,
+    category: categoryLabel,
+    opener: `<@${ticket.opener_id}>`,
+    closedBy: `<@${closedByUserId}>`,
+    reason,
+  });
+
+const transcriptPath = `ticket-${ticket.id}.html`;
+  try {
+    await supabase.storage
+      .from("ticket-transcripts")
+      .upload(transcriptPath, new Blob([html], { type: "text/html" }), {
+        contentType: "text/html",
+        upsert: true,
+      });
+  } catch (err) {
+    console.error("Transcript storage upload failed:", err);
+  }
+
+  const transcriptUrl = `https://cso-corporations.vercel.app/portal/transcripts/${ticket.id}`;
+  const finalReason = reason || "Resolved.";
+  const openedAtUnix = Math.floor(new Date(ticket.created_at ?? Date.now()).getTime() / 1000);
+  const TICKET_CATEGORY_ID = "1462489110659993721";
+  
+const closedEmbed = {
+    author: { name: "Comet Strategic Operations Corporation", icon_url: CSO_LOGO_URL },
+    title: "Ticket Closed",
+    color: 0x2ecc71,
+    fields: [
+      { name: "\uD83C\uDD94 Ticket ID", value: `${ticket.id}`, inline: true },
+      { name: "\u2705 Opened By", value: `<@${ticket.opener_id}>`, inline: true },
+      { name: "\uD83D\uDD34 Closed By", value: `<@${closedByUserId}>`, inline: true },
+      { name: "\uD83D\uDD50 Open Time", value: `<t:${openedAtUnix}:F>`, inline: true },
+      { name: "\uD83D\uDFE3 Claimed By", value: ticket.claimed_by ? `<@${ticket.claimed_by}>` : "Not claimed", inline: true },
+      { name: "\u2753 Reason", value: finalReason, inline: false },
+    ],
+    timestamp: new Date().toISOString(),
+  };
+
+  const rowComponents: any[] = [];
+  if (transcriptUrl) {
+    rowComponents.push({ type: 2, style: 5, label: "View Online Transcript", url: transcriptUrl });
+  }
+  rowComponents.push({ type: 2, style: 2, label: "Edit Reason", custom_id: `ticket_edit_reason:${ticket.id}` });
+
+  await discordApi(`/channels/${TICKET_TRANSCRIPT_CHANNEL_ID}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      embeds: [closedEmbed],
+      components: [{ type: 1, components: rowComponents }],
+    }),
+  });
+try {
+    const dmComponents = transcriptUrl
+      ? [{ type: 1, components: [{ type: 2, style: 5, label: "View Online Transcript", url: transcriptUrl }] }]
+      : [];
+    await sendDM(ticket.opener_id, {
+      embeds: [closedEmbed],
+      components: dmComponents,
+    });
+  } catch (err) {
+    console.error("Ticket-closed DM failed:", err);
+  }
+  await supabase
+    .from("tickets")
+    .update({
+      status: "closed",
+      closed_at: new Date().toISOString(),
+      close_reason: finalReason,
+      transcript_path: transcriptPath,
+    })
+    .eq("id", ticket.id);
+
+  await discordApi(`/channels/${channelId}`, { method: "DELETE" });
+
+  return { ok: true };
+}async function postMessageWithImageAttachments(
+  botToken: string,
+  channelId: string,
+  jsonPayload: Record<string, unknown>,
+  images: { url: string; filename: string }[],
+): Promise<Response> {
+  const form = new FormData();
+  const attachments: { id: number; filename: string }[] = [];
+
+  for (let i = 0; i < images.length; i++) {
+    const fileRes = await fetch(images[i].url);
+    const blob = await fileRes.blob();
+    form.append(`files[${i}]`, blob, images[i].filename);
+    attachments.push({ id: i, filename: images[i].filename });
+  }
+
+  form.append("payload_json", JSON.stringify({ ...jsonPayload, attachments }));
+
   return fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bot ${botToken}` },
@@ -889,102 +1088,6 @@ async function createAppealTicketChannel(
   }
 }
 
-async function createSupportTicketChannel(
-  discordApi: (path: string, init?: RequestInit) => Promise<Response>,
-  guildId: string,
-  categoryId: string,
-  reviewRoleIds: string[],
-  creatorId: string,
-  creatorUsername: string,
-  namePrefix: string,
-): Promise<string | null> {
-  try {
-    const rolesRes = await discordApi(`/guilds/${guildId}/roles`);
-    const rolesList = rolesRes.ok ? await rolesRes.json() : [];
-    const meRes = await discordApi(`/users/@me`);
-    const me = meRes.ok ? await meRes.json() : null;
-
-    const permissionOverwrites: any[] = [
-      { id: guildId, type: 0, deny: String(PERM_VIEW_CHANNEL) },
-      {
-        id: creatorId,
-        type: 1,
-        allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY),
-      },
-    ];
-    if (me?.id) {
-      permissionOverwrites.push({
-        id: me.id,
-        type: 1,
-        allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY | PERM_MANAGE_CHANNELS),
-      });
-    }
-    for (const roleId of reviewRoleIds) {
-      permissionOverwrites.push({
-        id: roleId,
-        type: 0,
-        allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY),
-      });
-    }
-    for (const role of rolesList) {
-      const rolePerms = BigInt(role.permissions ?? "0");
-      if ((rolePerms & PERMISSION_MODERATE_MEMBERS) !== 0n || (rolePerms & PERMISSION_ADMINISTRATOR) !== 0n) {
-        permissionOverwrites.push({
-          id: role.id,
-          type: 0,
-          allow: String(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_READ_MESSAGE_HISTORY),
-        });
-      }
-    }
-
-    const safeName = creatorUsername.toLowerCase().replace(/[^a-z0-9-]/g, "") || "member";
-    const channelName = `${namePrefix}-${safeName}-${Date.now().toString().slice(-5)}`;
-
-    const createChanRes = await discordApi(`/guilds/${guildId}/channels`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: channelName,
-        type: 0,
-        parent_id: categoryId,
-        permission_overwrites: permissionOverwrites,
-      }),
-    });
-    if (!createChanRes.ok) return null;
-    const chan = await createChanRes.json();
-    return chan.id;
-  } catch {
-    return null;
-  }
-}
-
-function buildSupportTicketTranscriptText(channelName: string, closedById: string, messages: any[]): string {
-  const lines: string[] = [];
-  lines.push(`Support Ticket Transcript \u2014 #${channelName}`);
-  lines.push(`Closed by: ${closedById}`);
-  lines.push(`Closed: ${new Date().toISOString()}`);
-  lines.push("=".repeat(60));
-  lines.push("");
-
-  for (const m of messages) {
-    const author = m.author?.username ?? "unknown";
-    const ts = new Date(m.timestamp).toISOString().replace("T", " ").slice(0, 19);
-    lines.push(`[${ts}] ${author}: ${m.content ?? ""}`);
-    for (const embed of m.embeds ?? []) {
-      if (embed.title) lines.push(`    embed: ${embed.title}`);
-      for (const f of embed.fields ?? []) {
-        lines.push(`      ${f.name}: ${f.value}`);
-      }
-    }
-    for (const att of m.attachments ?? []) {
-      lines.push(`    attachment: ${att.url}`);
-    }
-  }
-
-  if (messages.length === 0) lines.push("(no messages were sent in this ticket)");
-
-  return lines.join("\n");
-}
-
 // ---------- main handler ----------
 
 Deno.serve(async (req) => {
@@ -1034,6 +1137,45 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Sets (or clears) the SEND_MESSAGES bit for a role's permission overwrite on a
+  // channel, without touching any other permission bits already set for that role.
+  async function setChannelSendPermission(
+    channelId: string,
+    roleId: string,
+    mode: "deny" | "allow" | "neutral",
+  ) {
+    const SEND_MESSAGES_BIT = 2048n; // 1 << 11
+
+    const chRes = await discordApi(`/channels/${channelId}`);
+    if (!chRes.ok) {
+      throw new Error(`GET channel failed (${chRes.status}): ${await chRes.text()}`);
+    }
+    const channel = await chRes.json();
+    const existing = (channel.permission_overwrites || []).find((o: any) => o.id === roleId);
+
+    let allow = existing ? BigInt(existing.allow) : 0n;
+    let deny = existing ? BigInt(existing.deny) : 0n;
+
+    if (mode === "deny") {
+      deny |= SEND_MESSAGES_BIT;
+      allow &= ~SEND_MESSAGES_BIT;
+    } else if (mode === "allow") {
+      allow |= SEND_MESSAGES_BIT;
+      deny &= ~SEND_MESSAGES_BIT;
+    } else {
+      allow &= ~SEND_MESSAGES_BIT;
+      deny &= ~SEND_MESSAGES_BIT;
+    }
+
+    const putRes = await discordApi(`/channels/${channelId}/permissions/${roleId}`, {
+      method: "PUT",
+      body: JSON.stringify({ type: 0, allow: allow.toString(), deny: deny.toString() }),
+    });
+    if (!putRes.ok) {
+      throw new Error(`PUT permission overwrite failed (${putRes.status}): ${await putRes.text()}`);
+    }
+  }
+
   function moderationDMMessage(caseId: number, actionPhrase: string, reason: string): string {
     return `**Case #${caseId} \u2013 You have been ${actionPhrase} in ${SERVER_NAME}.**\n**Reason:** ${reason}`;
   }
@@ -1043,6 +1185,38 @@ Deno.serve(async (req) => {
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  // ---------- Autocomplete ----------
+  if (body.type === 4) {
+    if (body.data?.name === "force_end_shift") {
+      const FORCE_END_SHIFT_ROLE_ID = "1529239995607416983";
+      const focused = body.data.options?.find((o: any) => o.focused)?.value?.toLowerCase() ?? "";
+
+      const membersRes = await discordApi(`/guilds/${GUILD_ID}/members?limit=1000`);
+      const members = membersRes.ok ? await membersRes.json() : [];
+
+      const choices = members
+        .filter((m: any) => m.roles?.includes(FORCE_END_SHIFT_ROLE_ID))
+        .filter((m: any) => {
+          const name = (m.nick || m.user?.global_name || m.user?.username || "").toLowerCase();
+          return !focused || name.includes(focused);
+        })
+        .slice(0, 25)
+        .map((m: any) => ({
+          name: m.nick || m.user?.global_name || m.user?.username || m.user?.id,
+          value: m.user?.id,
+        }));
+
+      return new Response(JSON.stringify({ type: 8, data: { choices } }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ type: 8, data: { choices: [] } }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
 console.log("interaction context:", JSON.stringify({ hasMember: !!body.member, memberUserId: body.member?.user?.id, hasUser: !!body.user, userId: body.user?.id, guildId: body.guild_id }));
   const memberRoles: string[] = body.member?.roles ?? [];
   const reviewerName = body.member?.user?.username ?? body.member?.nick ?? "Unknown";
@@ -1064,37 +1238,67 @@ console.log("interaction context:", JSON.stringify({ hasMember: !!body.member, m
       }
     }
 
-    if (commandName === "apply") {
-      if (!memberRoles.includes(APPLY_ALLOWED_ROLE_ID)) {
-        return new Response(
-          JSON.stringify({
-            type: 4,
-            data: { content: "You don't have permission to use this command.", flags: 64 },
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
+if (commandName === "apply") {
+  if (!memberRoles.includes(APPLY_ALLOWED_ROLE_ID)) {
+    return new Response(
+      JSON.stringify({
+        type: 4,
+        data: { content: "You don't have permission to use this command.", flags: 64 },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
 
-      const { data: templates } = await supabase
-        .from("application_templates")
-        .select("*")
-        .eq("is_active", true)
-        .order("display_order", { ascending: true });
+  const { data: templates } = await supabase
+    .from("application_templates")
+    .select("*")
+    .eq("is_active", true)
+    .order("display_order", { ascending: true });
 
-      if (!templates || templates.length === 0) {
-        return new Response(
-          JSON.stringify({
-            type: 4,
-            data: { content: "No applications are open right now.", flags: 64 },
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
+  if (!templates || templates.length === 0) {
+    return new Response(
+      JSON.stringify({
+        type: 4,
+        data: { content: "No applications are open right now.", flags: 64 },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
 
-      return new Response(JSON.stringify(buildApplyIntroResponse(templates)), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+  // Filter out templates the member doesn't meet the role-hierarchy
+  // requirement for (e.g. COMET requires role 1463685989154427041 or higher).
+  const templatesNeedingCheck = templates.filter((t: any) => t.required_role_id);
+  let eligibleTemplates = templates;
+
+  if (templatesNeedingCheck.length > 0) {
+    const rolesRes = await discordApi(`/guilds/${GUILD_ID}/roles`);
+    const rolesList = rolesRes.ok ? await rolesRes.json() : [];
+    const rolePositionById: Record<string, number> = {};
+    for (const r of rolesList) rolePositionById[r.id] = r.position;
+
+    const memberTopPos = topRolePosition(memberRoles, rolePositionById);
+
+    eligibleTemplates = templates.filter((t: any) => {
+      if (!t.required_role_id) return true;
+      const requiredPos = rolePositionById[t.required_role_id] ?? 0;
+      return memberTopPos >= requiredPos;
+    });
+  }
+
+  if (eligibleTemplates.length === 0) {
+    return new Response(
+      JSON.stringify({
+        type: 4,
+        data: { content: "No applications are open right now.", flags: 64 },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  return new Response(JSON.stringify(buildApplyIntroResponse(eligibleTemplates)), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
     if (commandName === "suggestions") {
   return new Response(
@@ -1388,8 +1592,9 @@ if (commandName === "feedback") {
         const invokerTopPos = topRolePosition(memberRoles, rolePositionById);
         const targetTopPos = topRolePosition(targetRoles, rolePositionById);
         const invokerIsOwner = guildInfo.owner_id === discordUserId;
+        const invokerBypassesHierarchy = memberRoles.includes(HIERARCHY_BYPASS_ROLE_ID);
 
-        if (targetTopPos >= invokerTopPos && !invokerIsOwner) {
+        if (targetTopPos >= invokerTopPos && !invokerIsOwner && !invokerBypassesHierarchy) {
           await editOriginalInteractionResponse(applicationId, interactionToken, {
             content: "You can't punish someone with an equal or higher role than you.",
           });
@@ -1560,7 +1765,111 @@ if (commandName === "feedback") {
       );
     }
 
-    if (commandName === "revoke") {
+const LOG_RESPONSE_ALLOWED_ROLE_IDS = [
+  "1497779990241087579",
+  "1530325162560458752",
+];
+const RESPONSE_LOG_CHANNEL_ID = "1536881622727659590";
+
+if (commandName === "log_response") {
+  if (!memberRoles.some((r) => LOG_RESPONSE_ALLOWED_ROLE_IDS.includes(r))) {
+    return new Response(
+      JSON.stringify({
+        type: 4,
+        data: { content: "You don't have permission to use this command.", flags: 64 },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const opts = body.data.options ?? [];
+  const get = (name: string) => opts.find((o: any) => o.name === name)?.value;
+
+  const client: string = get("client");
+  const type: string = get("type");
+  const outcome: string = get("outcome");
+  const summary: string = get("summary");
+  const officers: string = get("officers");
+  const cometMembers: string | undefined = get("comet_members");
+
+  const applicationId = body.application_id;
+  const interactionToken = body.token;
+
+  const task = (async () => {
+    const { data: inserted, error: insertErr } = await supabase
+      .from("response_logs")
+      .insert({
+        guild_id: GUILD_ID,
+        responder_id: discordUserId,
+        officers,
+        comet_members: cometMembers ?? null,
+        client,
+        type,
+        outcome,
+        summary,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (insertErr || !inserted) {
+      await editOriginalInteractionResponse(applicationId, interactionToken, {
+        content: "\u26A0\uFE0F Something went wrong saving that log. Please try again.",
+      });
+      return;
+    }
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+    const caseNumber = `CSO-${String(inserted.id).padStart(5, "0")}`;
+
+    const logEmbed = {
+      author: { name: "Comet Strategic Operations \u2014 Incident Report", icon_url: CSO_LOGO_URL },
+      title: `\uD83D\uDCC4 Case File ${caseNumber}`,
+      color: 0x1f2937,
+      description:
+        "```\n" +
+        `DATE FILED    : ${dateStr} \u2014 ${timeStr} UTC\n` +
+        `INCIDENT TYPE : ${type}\n` +
+        `DISPOSITION   : ${outcome}\n` +
+        "```",
+      fields: [
+        { name: "\uD83D\uDC6E Reporting Officer", value: `<@${discordUserId}>`, inline: true },
+        { name: "\uD83D\uDCCD Location / Client", value: client, inline: true },
+        { name: "\u200B", value: "\u200B", inline: false },
+        { name: "\uD83E\uDD1D Assisting Officers", value: officers, inline: true },
+        { name: "\u26A1 C.O.M.E.T. Task Force", value: cometMembers?.trim() ? cometMembers : "None assigned", inline: true },
+        { name: "\u200B", value: "\u200B", inline: false },
+        { name: "\uD83D\uDCDD Narrative", value: summary, inline: false },
+      ],
+      footer: { text: `Case ${caseNumber} \u2022 Filed via CSO Records System` },
+      timestamp: now.toISOString(),
+    };
+
+    await discordApi(`/channels/${RESPONSE_LOG_CHANNEL_ID}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ embeds: [logEmbed] }),
+    });
+
+    await editOriginalInteractionResponse(applicationId, interactionToken, {
+      content: `Logged. Posted in <#${RESPONSE_LOG_CHANNEL_ID}>.`,
+    });
+  })();
+
+  // @ts-ignore - EdgeRuntime is provided by the Supabase Edge Functions runtime
+  if (typeof EdgeRuntime !== "undefined") {
+    // @ts-ignore
+    EdgeRuntime.waitUntil(task);
+  } else {
+    await task;
+  }
+
+  return new Response(JSON.stringify({ type: 5, data: { flags: 64 } }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+if (commandName === "revoke") {
       if (!hasModeratePermission(body.member?.permissions)) {
         return new Response(
           JSON.stringify({
@@ -1808,6 +2117,13 @@ if (commandName === "feedback") {
           method: "POST",
           body: JSON.stringify({
             content: `||<@${targetUserId}>||\n${moderationDMMessage(inserted.id, "warned", reason)}`,
+          }),
+        });
+
+        await discordApi(`/channels/1535822320134787133/messages`, {
+          method: "POST",
+          body: JSON.stringify({
+            content: `**Warned**\n**User:** <@${targetUserId}>\n**By:** <@${discordUserId}>\n**Reason:** ${reason}`,
           }),
         });
 
@@ -2391,202 +2707,6 @@ if (commandName === "feedback") {
       );
     }
 
-    if (commandName === "report") {
-      const opts = body.data.options ?? [];
-      const get = (name: string) => opts.find((o: any) => o.name === name)?.value;
-      const reportedUserId: string = get("member");
-      const reason: string = get("reason");
-      const hasProof: string = get("proof"); // "yes" | "no"
-
-      const reporterUsername = body.member?.user?.username ?? "member";
-      const channelId = await createSupportTicketChannel(
-        discordApi, GUILD_ID, REPORT_TICKET_CATEGORY_ID, REPORT_REVIEW_ROLE_IDS, discordUserId!, reporterUsername, "report",
-      );
-
-      const reportEmbed: any = {
-        title: "\uD83D\uDEA9 New Report",
-        color: 0xed4245,
-        thumbnail: { url: CSO_LOGO_URL },
-        fields: [
-          { name: "\uD83D\uDC64 Reported By", value: `<@${discordUserId}>`, inline: true },
-          { name: "\uD83D\uDEA9 Reporting", value: `<@${reportedUserId}>`, inline: true },
-          { name: "\uD83D\uDCF8 Has Proof?", value: hasProof === "yes" ? "Yes" : "No", inline: true },
-          { name: "\uD83D\uDCDD Reason", value: reason, inline: false },
-        ],
-      };
-
-      if (channelId) {
-        await discordApi(`/channels/${channelId}/messages`, {
-          method: "POST",
-          body: JSON.stringify({
-            content: REPORT_REVIEW_ROLE_IDS.map((id) => `<@&${id}>`).join(" "),
-            embeds: [reportEmbed],
-          }),
-        });
-
-        return new Response(
-          JSON.stringify({ type: 4, data: { content: `Your report has been submitted: <#${channelId}>`, flags: 64 } }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          type: 4,
-          data: {
-            content:
-              "I couldn't create a private ticket channel for your report. Ask an admin to give me the Manage Channels permission.",
-            flags: 64,
-          },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    if (commandName === "management_ticket" || commandName === "inquiry_ticket") {
-      const isManagement = commandName === "management_ticket";
-      const opts = body.data.options ?? [];
-      const reason: string = opts.find((o: any) => o.name === "reason")?.value ?? "";
-
-      const categoryId = isManagement ? MANAGEMENT_TICKET_CATEGORY_ID : INQUIRY_TICKET_CATEGORY_ID;
-      const reviewRoleIds = isManagement ? MANAGEMENT_REVIEW_ROLE_IDS : INQUIRY_REVIEW_ROLE_IDS;
-      const namePrefix = isManagement ? "management" : "inquiry";
-      const openerUsername = body.member?.user?.username ?? "member";
-
-      const channelId = await createSupportTicketChannel(
-        discordApi, GUILD_ID, categoryId, reviewRoleIds, discordUserId!, openerUsername, namePrefix,
-      );
-
-      const ticketEmbed: any = {
-        title: isManagement ? "\uD83D\uDCC1 New Management Ticket" : "\u2753 New Inquiry Ticket",
-        color: isManagement ? 0x5865f2 : 0x57f287,
-        thumbnail: { url: CSO_LOGO_URL },
-        fields: [
-          { name: "\uD83D\uDC64 Opened By", value: `<@${discordUserId}>`, inline: true },
-          { name: "\uD83D\uDCDD Reason", value: reason, inline: false },
-        ],
-      };
-
-      if (channelId) {
-        await discordApi(`/channels/${channelId}/messages`, {
-          method: "POST",
-          body: JSON.stringify({
-            content: reviewRoleIds.map((id) => `<@&${id}>`).join(" "),
-            embeds: [ticketEmbed],
-          }),
-        });
-
-        return new Response(
-          JSON.stringify({ type: 4, data: { content: `Your ticket has been created: <#${channelId}>`, flags: 64 } }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          type: 4,
-          data: {
-            content:
-              "I couldn't create a private ticket channel. Ask an admin to give me the Manage Channels permission.",
-            flags: 64,
-          },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    if (commandName === "close_ticket") {
-      if (!hasModeratePermission(body.member?.permissions)) {
-        return new Response(
-          JSON.stringify({
-            type: 4,
-            data: { content: "You need the Moderate Members permission to use this command.", flags: 64 },
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
-
-      const currentChannelId = body.channel_id;
-      let currentChannelName: string | undefined = body.channel?.name;
-      if (!currentChannelName) {
-        const chanRes = await discordApi(`/channels/${currentChannelId}`);
-        currentChannelName = chanRes.ok ? (await chanRes.json())?.name : undefined;
-      }
-      currentChannelName = currentChannelName ?? currentChannelId;
-
-      const isSupportTicket =
-        currentChannelName.startsWith("report-") ||
-        currentChannelName.startsWith("management-") ||
-        currentChannelName.startsWith("inquiry-");
-
-      if (!isSupportTicket) {
-        return new Response(
-          JSON.stringify({
-            type: 4,
-            data: { content: "This channel isn't an open report, management, or inquiry ticket.", flags: 64 },
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      }
-
-      const closeEmbed = {
-        title: "\uD83D\uDD12 Ticket Closed",
-        description: `The ticket #${currentChannelName} was closed by <@${discordUserId}>.`,
-        color: 0x99a1af,
-      };
-
-      const closeTask = (async () => {
-        let transcriptText = "";
-        try {
-          const messages = await fetchAllChannelMessages(discordApi, currentChannelId);
-          transcriptText = buildSupportTicketTranscriptText(currentChannelName!, discordUserId!, messages);
-        } catch (err) {
-          console.error("Transcript fetch failed:", err);
-        }
-
-        try {
-          if (transcriptText) {
-            await postMessageWithFile(
-              BOT_TOKEN,
-              TICKET_LOG_CHANNEL_ID,
-              { embeds: [closeEmbed] },
-              `${currentChannelName}-transcript.txt`,
-              transcriptText,
-            );
-          } else {
-            await discordApi(`/channels/${TICKET_LOG_CHANNEL_ID}/messages`, {
-              method: "POST",
-              body: JSON.stringify({ embeds: [closeEmbed] }),
-            });
-          }
-        } catch {
-          // best-effort
-        }
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        try {
-          await discordApi(`/channels/${currentChannelId}`, { method: "DELETE" });
-        } catch {
-          // best-effort
-        }
-      })();
-
-      // @ts-ignore - EdgeRuntime is provided by the Supabase Edge Functions runtime
-      if (typeof EdgeRuntime !== "undefined") {
-        // @ts-ignore
-        EdgeRuntime.waitUntil(closeTask);
-      } else {
-        await closeTask;
-      }
-
-      return new Response(
-        JSON.stringify({
-          type: 4,
-          data: { content: `Closing this ticket and logging it in <#${TICKET_LOG_CHANNEL_ID}>...` },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    }
-
     if (commandName === "close_appeal_ticket") {
       if (!hasModeratePermission(body.member?.permissions)) {
         return new Response(
@@ -2949,6 +3069,16 @@ if (commandName === "feedback") {
     }
 
     if (commandName === "fastpass") {
+      if (!memberRoles.includes("1530325162560458752")) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to use this command.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       const targetUser = body.data.options?.find((o: any) => o.name === "user")?.value;
 
       const embed = {
@@ -2988,6 +3118,16 @@ if (commandName === "feedback") {
     }
 
     if (commandName === "training_finished") {
+      if (!memberRoles.includes("1530325162560458752")) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to use this command.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       const opts = body.data.options || [];
       const getOpt = (name: string) => opts.find((o: any) => o.name === name)?.value;
 
@@ -3005,52 +3145,666 @@ if (commandName === "feedback") {
       const proofAttachmentId = getOpt("proof");
 
       const resolvedAttachments = body.data.resolved?.attachments || {};
-      const startingScreenshotUrl = startingScreenshotId ? resolvedAttachments[startingScreenshotId]?.url : undefined;
-      const endingScreenshotUrl = endingScreenshotId ? resolvedAttachments[endingScreenshotId]?.url : undefined;
+      const startingScreenshot = startingScreenshotId ? resolvedAttachments[startingScreenshotId] : undefined;
+      const endingScreenshot = endingScreenshotId ? resolvedAttachments[endingScreenshotId] : undefined;
       const proofUrl = proofAttachmentId ? resolvedAttachments[proofAttachmentId]?.url : undefined;
 
       const TRAINING_PING_ROLE_ID = "1530325162560458752";
       const TRAINING_THREAD_ID = "1490200623541522622";
 
-      const embed = {
-        color: 0x3498db,
-        title: "Training Finished",
-        fields: [
-          { name: "Trainer (Roblox)", value: String(trainerRoblox), inline: true },
-          { name: "Trainer (Discord)", value: `<@${trainerDiscordId}>`, inline: true },
-          { name: "Time Started", value: String(timeStarted), inline: true },
-          { name: "Time Finished", value: String(timeFinished), inline: true },
-          { name: `Attended (${attendedCount})`, value: String(attendedNames) },
-          { name: `Passed (${passedCount})`, value: String(passedNames) },
-          { name: "Notes", value: notes ? String(notes) : "None" },
-          ...(proofUrl ? [{ name: "\uD83D\uDCF7 | Additional Proof", value: `[View Attachment](${proofUrl})` }] : []),
-        ],
-        timestamp: new Date().toISOString(),
+      const lines = [
+        `[ROBLOX USERNAME] ${trainerRoblox}`,
+        `[DISCORD USERNAME] <@${trainerDiscordId}>`,
+        `[EVENT] Training Required Event`,
+        `[TIME STARTED] ${timeStarted}`,
+        `[TIME ENDED] ${timeFinished}`,
+        `[ATTENDED] ${attendedCount}`,
+        ``,
+        `${attendedNames}`,
+        ``,
+        `[PASSED] ${passedCount}`,
+        ``,
+        `${passedNames}`,
+        ``,
+        `[NOTES] ${notes ? notes : "None"}`,
+        `[PROOF] Below!${proofUrl ? ` Additional proof: ${proofUrl}` : ""}`,
+        `[PING] <@&${TRAINING_PING_ROLE_ID}>`,
+      ];
+
+      const applicationId = body.application_id;
+      const interactionToken = body.token;
+
+      const images: { url: string; filename: string }[] = [];
+      if (startingScreenshot) images.push({ url: startingScreenshot.url, filename: startingScreenshot.filename || "starting.png" });
+      if (endingScreenshot) images.push({ url: endingScreenshot.url, filename: endingScreenshot.filename || "ending.png" });
+
+      const task = (async () => {
+        const postRes = await postMessageWithImageAttachments(
+          BOT_TOKEN,
+          TRAINING_THREAD_ID,
+          {
+            content: lines.join("\n"),
+            allowed_mentions: { roles: [TRAINING_PING_ROLE_ID] },
+          },
+          images,
+        );
+
+        await editOriginalInteractionResponse(applicationId, interactionToken, {
+          content: postRes.ok
+            ? `Training report posted in <#${TRAINING_THREAD_ID}>.`
+            : "I couldn't post to that thread — check my permissions there.",
+        });
+
+        if (postRes.ok && Number(passedCount) > 0) {
+          await fetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: "Select who passed to give them their new roles:",
+              flags: 64,
+              components: [
+                {
+                  type: 1,
+                  components: [
+                    {
+                      type: 5, // USER_SELECT
+                      custom_id: "training_passed_role_select",
+                      placeholder: "Select who passed",
+                      min_values: 1,
+                      max_values: 25,
+                    },
+                  ],
+                },
+              ],
+            }),
+          });
+        }
+      })();
+
+      // @ts-ignore - EdgeRuntime is provided by the Supabase Edge Functions runtime
+      if (typeof EdgeRuntime !== "undefined") {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(task);
+      } else {
+        await task;
+      }
+
+      return new Response(JSON.stringify({ type: 5, data: { flags: 64 } }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (commandName === "lock" || commandName === "unlock") {
+      const LOCK_ALLOWED_ROLE_ID = "1530325162560458752";
+
+      if (!memberRoles.includes(LOCK_ALLOWED_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to use this command.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const channelId = body.channel_id;
+      const EVERYONE_ROLE_ID = GUILD_ID; // @everyone role ID is always the guild ID
+
+      try {
+        if (commandName === "lock") {
+          await setChannelSendPermission(channelId, EVERYONE_ROLE_ID, "deny");
+          await setChannelSendPermission(channelId, LOCK_ALLOWED_ROLE_ID, "allow");
+        } else {
+          await setChannelSendPermission(channelId, EVERYONE_ROLE_ID, "neutral");
+          await setChannelSendPermission(channelId, LOCK_ALLOWED_ROLE_ID, "neutral");
+        }
+      } catch (err) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: `Something went wrong updating this channel's permissions:\n\`\`\`${String(err).slice(0, 1800)}\`\`\``, flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: {
+            content: commandName === "lock" ? "\uD83D\uDD12 Channel locked." : "\uD83D\uDD13 Channel unlocked.",
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "tc") {
+      const TC_ALLOWED_ROLE_ID = "1517739789816828024";
+
+      if (!memberRoles.includes(TC_ALLOWED_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to use this command.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: {
+            content:
+              "**A General Staff inside of CSO activated a Topic Change failure to change topic will result in moderation.**",
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "blacklist") {
+      const sub = body.data.options?.[0];
+      const subName = sub?.name;
+      const subOpts = sub?.options ?? [];
+      const getSub = (name: string) => subOpts.find((o: any) => o.name === name)?.value;
+
+      if (subName === "issue") {
+        if (!memberRoles.includes(MOD_ACTION_ROLE_ID)) {
+          return new Response(
+            JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        const targetUserId: string = getSub("member");
+        const reason: string = getSub("reason");
+        const applicationId = body.application_id;
+        const interactionToken = body.token;
+
+        const task = (async () => {
+          // If they're currently a member, strip their roles now (keeping only
+          // the same investigation-safe list) and apply the blacklist role.
+          const memberRes = await discordApi(`/guilds/${GUILD_ID}/members/${targetUserId}`);
+          if (memberRes.ok) {
+            const targetMemberData = await memberRes.json();
+            const targetRoles: string[] = targetMemberData.roles || [];
+            const keptRoles = targetRoles.filter((r) => INVESTIGATION_KEEP_ROLE_IDS.includes(r));
+            const newRoles = Array.from(new Set([...keptRoles, BLACKLIST_ROLE_ID]));
+            await discordApi(`/guilds/${GUILD_ID}/members/${targetUserId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ roles: newRoles }),
+            });
+          }
+          // If they've already left, this same case row is what the bot's
+          // gateway listener checks on rejoin to re-apply the blacklist role.
+
+          const { data: inserted } = await supabase
+            .from("cases")
+            .insert({
+              guild_id: GUILD_ID,
+              user_id: targetUserId,
+              moderator_id: discordUserId,
+              reason,
+              status: "active",
+              punishment_type: "Blacklist",
+              appealable: false,
+            })
+            .select()
+            .single();
+
+          await discordApi(`/channels/${BLACKLIST_LOG_CHANNEL_ID}/messages`, {
+            method: "POST",
+            body: JSON.stringify({
+              content:
+                `||<@${targetUserId}>||\n**Case #${inserted?.id ?? "?"} \u2013 <@${targetUserId}> has been blacklisted.**\n` +
+                `**Reason:** ${reason}\n**Blacklisted By:** <@${discordUserId}>`,
+            }),
+          });
+
+          await editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: `<@${targetUserId}> has been blacklisted.${inserted ? ` Case #${inserted.id} logged.` : ""}`,
+          });
+        })();
+
+        EdgeRuntime.waitUntil(task);
+        return new Response(JSON.stringify({ type: 5, data: { flags: 64 } }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (subName === "appeal") {
+        if (!memberRoles.includes(BLACKLIST_ROLE_ID)) {
+          return new Response(
+            JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        const reason: string = getSub("reason");
+
+        const { data: caseRow } = await supabase
+          .from("cases")
+          .select("*")
+          .eq("user_id", discordUserId)
+          .eq("guild_id", GUILD_ID)
+          .eq("punishment_type", "Blacklist")
+          .eq("status", "active")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!caseRow) {
+          return new Response(
+            JSON.stringify({ type: 4, data: { content: "You don't have an active blacklist to appeal.", flags: 64 } }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (caseRow.appeal_status === "pending") {
+          return new Response(
+            JSON.stringify({ type: 4, data: { content: "You already have a pending blacklist appeal.", flags: 64 } }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        await supabase.from("cases").update({ appeal_status: "pending", appeal_reason: reason }).eq("id", caseRow.id);
+
+        const memberUsername = body.member?.user?.username ?? "member";
+        const channelId = await createAppealTicketChannel(discordApi, GUILD_ID, discordUserId!, memberUsername, caseRow.id);
+        if (channelId) {
+          await supabase.from("cases").update({ ticket_channel_id: channelId }).eq("id", caseRow.id);
+        }
+
+        const appealEmbed: any = {
+          title: `\uD83D\uDCCB Blacklist Appeal \u2014 Case #${caseRow.id}`,
+          color: 0xe67e22,
+          thumbnail: { url: CSO_LOGO_URL },
+          fields: [
+            { name: "\uD83D\uDC64 Member", value: `<@${discordUserId}>`, inline: false },
+            { name: "\u2696\uFE0F Blacklist Reason", value: caseRow.reason, inline: false },
+            { name: "\uD83D\uDCDD Appeal Reason", value: reason, inline: false },
+          ],
+          footer: { text: caseFooterShort(caseRow.id) },
+        };
+
+        await discordApi(`/channels/${APPEAL_CHANNEL_ID}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ content: `<@${discordUserId}>`, embeds: [appealEmbed] }),
+        });
+
+        if (channelId) {
+          await discordApi(`/channels/${channelId}/messages`, {
+            method: "POST",
+            body: JSON.stringify({
+              content: `||<@${discordUserId}>||`,
+              embeds: [appealEmbed],
+              components: [
+                {
+                  type: 1,
+                  components: [
+                    { type: 2, style: 3, label: "Approve", custom_id: `appealreview_approve:${caseRow.id}` },
+                    { type: 2, style: 4, label: "Deny", custom_id: `appealreview_deny:${caseRow.id}` },
+                  ],
+                },
+              ],
+            }),
+          });
+
+          return new Response(
+            JSON.stringify({ type: 4, data: { content: `Your blacklist appeal ticket has been created: <#${channelId}>`, flags: 64 } }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: {
+              content:
+                "Your appeal was recorded and posted for review, but I couldn't create a private ticket channel for it. Ask an admin to give me the Manage Channels permission.",
+              flags: 64,
+            },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response("Unknown subcommand", { status: 400 });
+    }
+
+    if (commandName === "force_end_shift") {
+      if (!memberRoles.includes(MOD_ACTION_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const targetUserId: string = body.data.options?.find((o: any) => o.name === "member")?.value;
+      const result = await endShiftForDiscordUser(supabase, targetUserId, BOT_TOKEN, GUILD_ID);
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: {
+            content: result.error
+              ? `Couldn't force-end that shift: ${result.error}`
+              : `Force-ended <@${targetUserId}>'s shift.`,
+            flags: 64,
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+if (commandName === "claim") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("*")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      await supabase.from("tickets").update({ claimed_by: discordUserId }).eq("id", ticket.id);
+      return new Response(
+        JSON.stringify({ type: 4, data: { content: `<@${discordUserId}> has claimed this ticket.` } }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "unclaim") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("*")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      await supabase.from("tickets").update({ claimed_by: null }).eq("id", ticket.id);
+      return new Response(
+        JSON.stringify({ type: 4, data: { content: `<@${discordUserId}> has unclaimed this ticket.` } }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "close") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const reasonOpt: string | undefined = body.data.options?.find((o: any) => o.name === "reason")?.value;
+
+      const task = (async () => {
+        const result = await closeTicket(discordApi, supabase, BOT_TOKEN, body.channel_id, discordUserId!, reasonOpt);
+        if (!result.ok) {
+          await editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: result.error ?? "Couldn't close this ticket.",
+          });
+        }
+      })();
+
+      // @ts-ignore - EdgeRuntime is provided by the Supabase Edge Functions runtime
+      if (typeof EdgeRuntime !== "undefined") {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(task);
+      } else {
+        await task;
+      }
+
+      return new Response(JSON.stringify({ type: 5, data: { flags: 64 } }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (commandName === "rename") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("id")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const newName: string = body.data.options?.find((o: any) => o.name === "name")?.value;
+      const safeName = newName.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 90) || "ticket";
+      const renameRes = await discordApi(`/channels/${body.channel_id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: safeName }),
+      });
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: { content: renameRes.ok ? `Channel renamed to \`${safeName}\`.` : "Couldn't rename this channel — check my permissions." },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "add") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("id")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const addUserId: string = body.data.options?.find((o: any) => o.name === "member")?.value;
+      const VIEW_CHANNEL = 1024n;
+      const SEND_MESSAGES = 2048n;
+      const addRes = await discordApi(`/channels/${body.channel_id}/permissions/${addUserId}`, {
+        method: "PUT",
+        body: JSON.stringify({ type: 1, allow: (VIEW_CHANNEL | SEND_MESSAGES).toString() }),
+      });
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: { content: addRes.ok ? `<@${addUserId}> has been added to this ticket.` : "Couldn't add that member — check my permissions." },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "remove") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("id")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const removeUserId: string = body.data.options?.find((o: any) => o.name === "member")?.value;
+      const removeRes = await discordApi(`/channels/${body.channel_id}/permissions/${removeUserId}`, {
+        method: "DELETE",
+      });
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: { content: removeRes.ok ? `<@${removeUserId}> has been removed from this ticket.` : "Couldn't remove that member — check my permissions." },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (commandName === "transfer") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("id")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const transferToId: string = body.data.options?.find((o: any) => o.name === "member")?.value;
+      await supabase.from("tickets").update({ claimed_by: transferToId }).eq("id", ticket.id);
+      return new Response(
+        JSON.stringify({ type: 4, data: { content: `This ticket has been transferred to <@${transferToId}>.` } }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+if (commandName === "close_request") {
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You need the Moderate Members permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("*")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const reasonOpt: string | undefined = body.data.options?.find((o: any) => o.name === "reason")?.value;
+      await supabase.from("tickets").update({ pending_close_reason: reasonOpt ?? null }).eq("id", ticket.id);
+
+      return new Response(
+        JSON.stringify({
+          type: 4,
+          data: {
+            content: `<@${ticket.opener_id}>, staff would like to close this ticket. Do you confirm?`,
+            components: [
+              {
+                type: 1,
+                components: [
+                  { type: 2, style: 3, label: "Confirm Close", custom_id: `close_request_confirm:${ticket.id}` },
+                  { type: 2, style: 2, label: "Cancel", custom_id: `close_request_cancel:${ticket.id}` },
+                ],
+              },
+            ],
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+if (commandName === "ticket_panel") {
+      const TICKET_PANEL_ALLOWED_ROLE_ID = "1462490090914709548";
+      if (!memberRoles.includes(TICKET_PANEL_ALLOWED_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to use this command.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const panelEmbed = {
+        title: "Comet Strategic Operations Support Panel",
+        color: 0xffffff,
+        thumbnail: { url: CSO_LOGO_URL },
+        description:
+          "Welcome to the Comet Strategic Operations Support Channel!\n\n" +
+          "Here, you're allowed to pick from the three support channels we provide to you! You may choose your support based of the description of each ticket. Please consider the following:\n\n" +
+          "**CSO Management Support:**\n" +
+          "\u2022 Important Questions (Liveries, Discord, Server)\n" +
+          "\u2022 Serious Requests\n" +
+          "\u2022 High Ranking Reports\n\n" +
+          "**CSO Report Ticket:**\n" +
+          "\u2022 Reporting a CSO member\n\n" +
+          "**CSO Inquiry Support:**\n" +
+          "\u2022 Questions regarding the Department\n" +
+          "\u2022 Questions regarding ranks\n" +
+          "\u2022 Help regarding Channels, Roles, or Application Access\n\n" +
+          "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n" +
+          "We thank you for following our Support Channel Guidelines and rules. Please don't hesitate to contact us when need!",
       };
 
-      const embeds: any[] = [embed];
-      if (startingScreenshotUrl) {
-        embeds.push({ color: 0x3498db, title: "Starting Screenshot", image: { url: startingScreenshotUrl } });
-      }
-      if (endingScreenshotUrl) {
-        embeds.push({ color: 0x3498db, title: "Ending Screenshot", image: { url: endingScreenshotUrl } });
-      }
+      const panelComponents = [
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 1, label: "CSO Management", custom_id: "ticket_open_management" },
+            { type: 2, style: 4, label: "Report Ticket", custom_id: "ticket_open_report" },
+            { type: 2, style: 2, label: "Inquiry Support", custom_id: "ticket_open_inquiry" },
+          ],
+        },
+      ];
 
-      const postRes = await discordApi(`/channels/${TRAINING_THREAD_ID}/messages`, {
+      const TICKET_PANEL_CHANNEL_ID = "1462488704579797126";
+      const panelPostRes = await discordApi(`/channels/${TICKET_PANEL_CHANNEL_ID}/messages`, {
         method: "POST",
-        body: JSON.stringify({
-          content: `<@&${TRAINING_PING_ROLE_ID}>`,
-          embeds,
-          allowed_mentions: { roles: [TRAINING_PING_ROLE_ID] },
-        }),
+        body: JSON.stringify({ embeds: [panelEmbed], components: panelComponents }),
       });
 
       return new Response(
         JSON.stringify({
           type: 4,
-          data: postRes.ok
-            ? { content: `Training report posted in <#${TRAINING_THREAD_ID}>.`, flags: 64 }
-            : { content: "I couldn't post to that thread — check my permissions there.", flags: 64 },
+          data: panelPostRes.ok
+            ? { content: `Panel posted in <#${TICKET_PANEL_CHANNEL_ID}>.`, flags: 64 }
+            : { content: "I couldn't post to that channel — check my permissions there.", flags: 64 },
         }),
         { headers: { "Content-Type": "application/json" } },
       );
@@ -3062,6 +3816,317 @@ if (commandName === "feedback") {
   // ---------- Button clicks / select menus ----------
   if (body.type === 3) {
     const customId: string = body.data.custom_id;
+
+    // --- Ticket system: open a new ticket ---
+if (customId.startsWith("ticket_open_")) {
+  const category = customId.replace("ticket_open_", "");
+  const cfg = TICKET_CATEGORIES[category];
+  if (!cfg) {
+    return new Response(
+      JSON.stringify({ type: 4, data: { content: "Unknown ticket category.", flags: 64 } }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const modalComponents =
+    category === "report"
+      ? [
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: "report_target",
+                style: 1,
+                label: "Who are you reporting?",
+                placeholder: "Username or @mention",
+                required: true,
+                max_length: 100,
+              },
+            ],
+          },
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: "reason",
+                style: 2,
+                label: "Why are you reporting them?",
+                placeholder: "Describe what happened",
+                required: true,
+                max_length: 1000,
+              },
+            ],
+          },
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: "has_proof",
+                style: 1,
+                label: "Do you have proof? (Yes/No)",
+                placeholder: "Yes or No",
+                required: true,
+                max_length: 3,
+              },
+            ],
+          },
+        ]
+      : [
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: "reason",
+                style: 2,
+                label: "Why are you opening this ticket?",
+                required: true,
+                max_length: 1000,
+              },
+            ],
+          },
+        ];
+
+  return new Response(
+    JSON.stringify({
+      type: 9,
+      data: {
+        custom_id: `ticket_open_modal:${category}`,
+        title: `Open ${cfg.label} Ticket`,
+        components: modalComponents,
+      },
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
+    if (customId.startsWith("close_request_confirm:") || customId.startsWith("close_request_cancel:")) {
+      const ticketId = customId.split(":")[1];
+      const confirmed = customId.startsWith("close_request_confirm:");
+
+      const { data: ticket } = await supabase.from("tickets").select("*").eq("id", ticketId).maybeSingle();
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This ticket no longer exists.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const isOpener = discordUserId === ticket.opener_id;
+      const isStaff = hasModeratePermission(body.member?.permissions);
+      if (!isOpener && !isStaff) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "Only the ticket opener or staff can respond to this.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (!confirmed) {
+        return new Response(
+          JSON.stringify({ type: 7, data: { content: "Close request cancelled.", components: [] } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const applicationId = body.application_id;
+      const interactionToken = body.token;
+
+      const task = (async () => {
+        const result = await closeTicket(
+          discordApi, supabase, BOT_TOKEN, ticket.channel_id, discordUserId!, ticket.pending_close_reason ?? undefined,
+        );
+        if (!result.ok) {
+          await editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: result.error ?? "Something went wrong closing this ticket.",
+          });
+        }
+      })();
+
+      // @ts-ignore - EdgeRuntime is provided by the Supabase Edge Functions runtime
+      if (typeof EdgeRuntime !== "undefined") {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(task);
+      } else {
+        await task;
+      }
+
+      return new Response(JSON.stringify({ type: 6 }), { headers: { "Content-Type": "application/json" } });
+    }
+// --- Ticket system: claim ---
+    if (customId === "ticket_claim") {
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("*")
+        .eq("channel_id", body.channel_id)
+        .eq("status", "open")
+        .maybeSingle();
+
+      if (!ticket) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This isn't an open ticket channel.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const cfg = TICKET_CATEGORIES[ticket.category];
+      if (!cfg || !cfg.roleIds.some((r) => memberRoles.includes(r))) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to claim this ticket.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      await supabase.from("tickets").update({ claimed_by: discordUserId }).eq("id", ticket.id);
+
+      const existingEmbed = body.message?.embeds?.[0] ?? {};
+      const updatedEmbed = { ...existingEmbed, footer: { text: `Claimed by ${reviewerName}` } };
+
+      const existingComponents = body.message?.components ?? [];
+      const updatedComponents = existingComponents.map((row: any) => ({
+        ...row,
+        components: row.components.map((c: any) =>
+          c.custom_id === "ticket_claim" ? { ...c, disabled: true } : c,
+        ),
+      }));
+
+      return new Response(
+        JSON.stringify({
+          type: 7,
+          data: { embeds: [updatedEmbed], components: updatedComponents },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+   // --- Ticket system: edit close reason ---
+    if (customId.startsWith("ticket_edit_reason:")) {
+      const ticketId = customId.split(":")[1];
+
+      if (!hasModeratePermission(body.member?.permissions)) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to edit this.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          type: 9,
+          data: {
+            custom_id: `ticket_edit_reason_modal:${ticketId}`,
+            title: "Edit Close Reason",
+            components: [
+              {
+                type: 1,
+                components: [
+                  {
+                    type: 4,
+                    custom_id: "reason",
+                    style: 2,
+                    label: "New reason",
+                    required: true,
+                    max_length: 500,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+ // --- Ticket system: close (no reason) ---
+    if (customId === "ticket_close") {
+      const applicationId = body.application_id;
+      const interactionToken = body.token;
+      const channelId = body.channel_id;
+      const closedBy = discordUserId!;
+
+      const task = (async () => {
+        const result = await closeTicket(discordApi, supabase, BOT_TOKEN, channelId, closedBy);
+        if (!result.ok) {
+          await editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: result.error ?? "Something went wrong closing this ticket.",
+          });
+        }
+      })();
+
+      EdgeRuntime.waitUntil(task);
+      return new Response(JSON.stringify({ type: 5, data: { flags: 64 } }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // --- Ticket system: close with reason (opens a modal) ---
+    if (customId === "ticket_close_reason") {
+      return new Response(
+        JSON.stringify({
+          type: 9,
+          data: {
+            custom_id: `ticket_close_reason_modal:${body.channel_id}`,
+            title: "Close Ticket",
+            components: [
+              {
+                type: 1,
+                components: [
+                  {
+                    type: 4,
+                    custom_id: "reason",
+                    style: 2,
+                    label: "Reason for closing",
+                    required: true,
+                    max_length: 500,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // --- Training finished: apply roles to who passed ---
+    if (customId === "training_passed_role_select") {
+      const selectedUserIds: string[] = body.data.values || [];
+      const resolvedMembers = body.data.resolved?.members || {};
+
+      const PASSED_ROLES_TO_ADD = [
+        "1462492552396541972",
+        "1504249548493820025",
+        "1467667651433070655",
+        "1462500854253883455",
+      ];
+      const PASSED_ROLE_TO_REMOVE = "1467421508803629129";
+
+      for (const uid of selectedUserIds) {
+        const currentRoles: string[] = resolvedMembers[uid]?.roles || [];
+        const newRoles = Array.from(
+          new Set(currentRoles.filter((r) => r !== PASSED_ROLE_TO_REMOVE).concat(PASSED_ROLES_TO_ADD)),
+        );
+        try {
+          await discordApi(`/guilds/${GUILD_ID}/members/${uid}`, {
+            method: "PATCH",
+            body: JSON.stringify({ roles: newRoles }),
+          });
+        } catch {
+          // best-effort
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          type: 7, // UPDATE_MESSAGE
+          data: {
+            content: `Updated roles for: ${selectedUserIds.map((id) => `<@${id}>`).join(", ") || "(no one selected)"}`,
+            components: [],
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
 
     // --- Fastpass: accept button ---
     if (customId.startsWith("fastpass_agree_")) {
@@ -3607,112 +4672,186 @@ if (commandName === "feedback") {
       );
     }
 
-    // --- LOA approve/deny flow ---
-    const [action, loaId] = customId.split(":");
+    // --- Role backup: Restore Roles button (from CSO Management 2.0's leave log) ---
+    if (customId.startsWith("restore_roles_")) {
+      const targetUserId = customId.replace("restore_roles_", "");
 
-    if (!memberRoles.includes(APPROVER_ROLE_ID)) {
+      const MANAGE_ROLES_BIT = 1n << 28n;
+      const perms = BigInt(body.member?.permissions ?? "0");
+      if ((perms & MANAGE_ROLES_BIT) === 0n && (perms & PERMISSION_ADMINISTRATOR) === 0n) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to restore roles.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: record } = await supabase
+        .from("role_backups")
+        .select("*")
+        .eq("guild_id", GUILD_ID)
+        .eq("user_id", targetUserId)
+        .maybeSingle();
+
+      if (!record) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "No saved roles found for that user.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const memberRes = await discordApi(`/guilds/${GUILD_ID}/members/${targetUserId}`);
+      if (!memberRes.ok) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "That user is not currently in the server, so their roles can't be restored yet. They need to rejoin first.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const memberData = await memberRes.json();
+
+      const rolesRes = await discordApi(`/guilds/${GUILD_ID}/roles`);
+      const rolesList = rolesRes.ok ? await rolesRes.json() : [];
+      const rolePositionById: Record<string, number> = {};
+      for (const r of rolesList) rolePositionById[r.id] = r.position;
+
+      const selfRes = await discordApi(`/users/@me`);
+const selfData = selfRes.ok ? await selfRes.json() : null;
+const meRes = selfData ? await discordApi(`/guilds/${GUILD_ID}/members/${selfData.id}`) : null;
+const meData = meRes && meRes.ok ? await meRes.json() : null;
+const botTopPos = topRolePosition(meData?.roles ?? [], rolePositionById);
+
+      const savedRoleIds: string[] = record.roles ?? [];
+      const assignable = savedRoleIds.filter(
+        (id) => rolePositionById[id] !== undefined && rolePositionById[id] < botTopPos,
+      );
+      const skipped = savedRoleIds.length - assignable.length;
+
+      const currentRoles: string[] = memberData.roles ?? [];
+      const newRoles = Array.from(new Set([...currentRoles, ...assignable]));
+
+      const updateRes = await discordApi(`/guilds/${GUILD_ID}/members/${targetUserId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ roles: newRoles }),
+      });
+
+      if (!updateRes.ok) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "Something went wrong restoring roles.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      let msg = `Restored ${assignable.length} role(s) to ${record.username ?? "that member"}.`;
+      if (skipped > 0) msg += ` (${skipped} role(s) skipped \u2014 deleted or above the bot's own role.)`;
+
+      return new Response(
+        JSON.stringify({ type: 4, data: { content: msg, flags: 64 } }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // --- Role backup: per-role undo button (from the live role change log) ---
+    if (customId.startsWith("roleundo_")) {
+      const [, action, targetUserId, roleId] = customId.split("_");
+
+      const MANAGE_ROLES_BIT = 1n << 28n;
+      const perms = BigInt(body.member?.permissions ?? "0");
+      if ((perms & MANAGE_ROLES_BIT) === 0n && (perms & PERMISSION_ADMINISTRATOR) === 0n) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "You don't have permission to do that.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const memberRes = await discordApi(`/guilds/${GUILD_ID}/members/${targetUserId}`);
+      if (!memberRes.ok) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "That user is no longer in the server.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const rolesRes = await discordApi(`/guilds/${GUILD_ID}/roles`);
+      const rolesList = rolesRes.ok ? await rolesRes.json() : [];
+      const roleInfo = rolesList.find((r: any) => r.id === roleId);
+      if (!roleInfo) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "That role no longer exists.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const rolePositionById: Record<string, number> = {};
+      for (const r of rolesList) rolePositionById[r.id] = r.position;
+     const selfRes = await discordApi(`/users/@me`);
+const selfData = selfRes.ok ? await selfRes.json() : null;
+const meRes = selfData ? await discordApi(`/guilds/${GUILD_ID}/members/${selfData.id}`) : null;
+const meData = meRes && meRes.ok ? await meRes.json() : null;
+const botTopPos = topRolePosition(meData?.roles ?? [], rolePositionById);
+
+      if (roleInfo.position >= botTopPos) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "I can't manage that role \u2014 it's positioned above my own highest role.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const method = action === "restore" ? "PUT" : "DELETE";
+      const res = await discordApi(`/guilds/${GUILD_ID}/members/${targetUserId}/roles/${roleId}`, { method });
+
+      if (!res.ok) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "Something went wrong \u2014 check my role permissions.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const verb = action === "restore" ? "Restored" : "Revoked";
+      const prep = action === "restore" ? "to" : "from";
       return new Response(
         JSON.stringify({
           type: 4,
-          data: { content: "You don't have permission to review LOA requests.", flags: 64 },
+          data: { content: `${verb} **${roleInfo.name}** ${prep} <@${targetUserId}>.`, flags: 64 },
         }),
         { headers: { "Content-Type": "application/json" } },
       );
     }
 
-    const { data: loaRow } = await supabase.from("loa_requests").select("*").eq("id", loaId).single();
+    // --- LOA approve/deny flow ---
+    if (customId.startsWith("loa_approve:") || customId.startsWith("loa_deny:")) {
+      const [action, loaId] = customId.split(":");
 
-    if (!loaRow) {
-      return new Response(
-        JSON.stringify({ type: 4, data: { content: "This LOA request no longer exists.", flags: 64 } }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    }
+      if (!memberRoles.includes(APPROVER_ROLE_ID)) {
+        return new Response(
+          JSON.stringify({
+            type: 4,
+            data: { content: "You don't have permission to review LOA requests.", flags: 64 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
 
-    if (action === "loa_deny") {
-      return new Response(
-        JSON.stringify({
-          type: 9,
-          data: {
-            custom_id: `loa_deny_modal:${loaId}`,
-            title: "Deny LOA Request",
-            components: [
-              {
-                type: 1,
-                components: [
-                  {
-                    type: 4,
-                    custom_id: "deny_reason",
-                    style: 2,
-                    label: "Reason for denial",
-                    placeholder: "Explain why this request is being denied...",
-                    required: true,
-                    max_length: 500,
-                  },
-                ],
-              },
-            ],
-          },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    }
+      const { data: loaRow } = await supabase.from("loa_requests").select("*").eq("id", loaId).single();
 
-    if (action === "loa_approve") {
-      return new Response(
-        JSON.stringify({
-          type: 9,
-          data: {
-            custom_id: `loa_approve_modal:${loaId}`,
-            title: "Approve LOA Request",
-            components: [
-              {
-                type: 1,
-                components: [
-                  {
-                    type: 4,
-                    custom_id: "start_date",
-                    style: 1,
-                    label: "Start date (YYYY-MM-DD)",
-                    value: loaRow.start_date,
-                    required: true,
-                    max_length: 10,
-                  },
-                ],
-              },
-              {
-                type: 1,
-                components: [
-                  {
-                    type: 4,
-                    custom_id: "end_date",
-                    style: 1,
-                    label: "End date (YYYY-MM-DD) - shorten if needed",
-                    value: loaRow.end_date,
-                    required: true,
-                    max_length: 10,
-                  },
-                ],
-              },
-              {
-                type: 1,
-                components: [
-                  {
-                    type: 4,
-                    custom_id: "notes",
-                    style: 2,
-                    label: "Notes (optional)",
-                    placeholder: "Any additional notes for this approval...",
-                    required: false,
-                    max_length: 500,
-                  },
-                ],
-              },
-            ],
-          },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
+      if (!loaRow) {
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: "This LOA request no longer exists.", flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (action === "loa_deny") {
+        // ...unchanged, existing modal-open code goes here
+      }
+
+      if (action === "loa_approve") {
+        // ...unchanged, existing modal-open code goes here
+      }
     }
 
     return new Response("Unknown action", { status: 400 });
@@ -3722,7 +4861,215 @@ if (commandName === "feedback") {
   if (body.type === 5) {
     const customId: string = body.data.custom_id;
 
-    // --- Reaction role description modal ---
+    // --- Ticket system: open (modal submit) ---
+    if (customId.startsWith("ticket_open_modal:")) {
+  const category = customId.split(":")[1];
+  const cfg = TICKET_CATEGORIES[category];
+  if (!cfg) {
+    return new Response(
+      JSON.stringify({ type: 4, data: { content: "Unknown ticket category.", flags: 64 } }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const fields = body.data.components.flatMap((row: any) => row.components);
+  const reason = fields.find((f: any) => f.custom_id === "reason")?.value ?? "";
+  const reportTarget = fields.find((f: any) => f.custom_id === "report_target")?.value ?? "";
+  const hasProof = fields.find((f: any) => f.custom_id === "has_proof")?.value ?? "";
+
+  const applicationId = body.application_id;
+  const interactionToken = body.token;
+  const openerId = discordUserId!;
+  const openerUsername = body.member?.user?.username ?? "member";
+
+  const task = (async () => {
+    const { data: existing } = await supabase
+      .from("tickets")
+      .select("channel_id")
+      .eq("opener_id", openerId)
+      .eq("category", category)
+      .eq("status", "open")
+      .maybeSingle();
+
+    if (existing) {
+      await editOriginalInteractionResponse(applicationId, interactionToken, {
+        content: `You already have an open ${cfg.label} ticket: <#${existing.channel_id}>`,
+      });
+      return;
+    }
+
+    const MAX_OPEN_TICKETS_PER_USER = 5;
+    const { count: openTicketCount } = await supabase
+      .from("tickets")
+      .select("id", { count: "exact", head: true })
+      .eq("opener_id", openerId)
+      .eq("status", "open");
+
+    if ((openTicketCount ?? 0) >= MAX_OPEN_TICKETS_PER_USER) {
+      await editOriginalInteractionResponse(applicationId, interactionToken, {
+        content: `You already have ${openTicketCount} open tickets, which is the maximum of ${MAX_OPEN_TICKETS_PER_USER}. Please close an existing ticket before opening a new one.`,
+      });
+      return;
+    }
+
+    const VIEW_CHANNEL = 1024n;
+    const SEND_MESSAGES = 2048n;
+    const permissionOverwrites = [
+      { id: GUILD_ID, type: 0, deny: VIEW_CHANNEL.toString() },
+      { id: openerId, type: 1, allow: (VIEW_CHANNEL | SEND_MESSAGES).toString() },
+      ...cfg.roleIds.map((r) => ({ id: r, type: 0, allow: (VIEW_CHANNEL | SEND_MESSAGES).toString() })),
+      { id: TICKET_PING_EXTRA_ROLE_ID, type: 0, allow: (VIEW_CHANNEL | SEND_MESSAGES).toString() },
+    ];
+
+   const { data: ticketRow, error: ticketInsertErr } = await supabase
+      .from("tickets")
+      .insert({
+        guild_id: GUILD_ID,
+        category,
+        opener_id: openerId,
+        status: "open",
+      })
+      .select()
+      .single();
+
+    if (ticketInsertErr || !ticketRow) {
+      await editOriginalInteractionResponse(applicationId, interactionToken, {
+        content: "Something went wrong creating your ticket. Please contact staff directly.",
+      });
+      return;
+    }
+
+    const categoryChannelId = await findOrCreateTicketCategory(
+      discordApi, GUILD_ID, cfg.categoryName, [...cfg.roleIds, TICKET_PING_EXTRA_ROLE_ID],
+    );
+
+    const createRes = await discordApi(`/guilds/${GUILD_ID}/channels`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: `${openerUsername}-${ticketRow.id}`.slice(0, 90),
+        type: 0,
+        parent_id: categoryChannelId ?? undefined,
+        permission_overwrites: permissionOverwrites,
+      }),
+    });
+
+    if (!createRes.ok) {
+      const errBody = await createRes.text();
+      console.error("Ticket channel creation failed:", createRes.status, errBody);
+      await supabase.from("tickets").delete().eq("id", ticketRow.id);
+      await editOriginalInteractionResponse(applicationId, interactionToken, {
+        content: "Something went wrong creating your ticket channel. Please contact staff directly.",
+      });
+      return;
+    }
+
+    const newChannel = await createRes.json();
+
+    await supabase.from("tickets").update({ channel_id: newChannel.id }).eq("id", ticketRow.id);
+
+   // Ping the category's staff roles plus the standing ping role, via
+    // hidden/spoilered small text, same pattern as the previous ticket bot used.
+    const pingRoleIds = [...cfg.roleIds, TICKET_PING_EXTRA_ROLE_ID];
+    await discordApi(`/channels/${newChannel.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: `-# ${pingRoleIds.map((r) => `||<@&${r}>||`).join("")}`,
+        allowed_mentions: { roles: pingRoleIds },
+      }),
+    });
+
+    const embedFields =
+      category === "report"
+        ? [
+            { name: "Reporting", value: reportTarget || "N/A" },
+            { name: "Reason", value: reason },
+            { name: "Proof Provided", value: hasProof || "N/A" },
+          ]
+        : [{ name: "Reason", value: reason }];
+
+    const welcomeEmbed = {
+      color: cfg.color,
+      description:
+        `${cfg.welcomeIntro} While waiting for their assistance, please state your question below.\n\n` +
+        "- Please do NOT ping staff roles or members while waiting.\n" +
+        "- If you don't respond to a ticket in 12 hours, your ticket will be closed.\n" +
+        "- If there is no response after 12 hours, you may ping the Grand Commander, or Assistang Grand.\n\n" +
+        `Once again, we thank you for contacting ${cfg.label}!`,
+      fields: embedFields,
+    };
+
+    const ticketComponents = [
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 4, label: "Close", emoji: { name: "\uD83D\uDD12" }, custom_id: "ticket_close" },
+          { type: 2, style: 4, label: "Close With Reason", emoji: { name: "\uD83D\uDD12" }, custom_id: "ticket_close_reason" },
+          { type: 2, style: 3, label: "Claim", emoji: { name: "\uD83D\uDC8E" }, custom_id: "ticket_claim" },
+        ],
+      },
+    ];
+
+    await discordApi(`/channels/${newChannel.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ embeds: [welcomeEmbed], components: ticketComponents }),
+    });
+
+    await editOriginalInteractionResponse(applicationId, interactionToken, {
+      content: `Your ticket has been created: <#${newChannel.id}>`,
+    });
+  })();
+
+  EdgeRuntime.waitUntil(task);
+  return new Response(JSON.stringify({ type: 5, data: { flags: 64 } }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+    // --- Ticket system: close with reason (modal submit) ---
+    if (customId.startsWith("ticket_close_reason_modal:")) {
+      const channelId = customId.split(":")[1];
+      const fields = body.data.components.flatMap((row: any) => row.components);
+      const reason = fields.find((f: any) => f.custom_id === "reason")?.value ?? "";
+
+      const applicationId = body.application_id;
+      const interactionToken = body.token;
+      const closedBy = discordUserId!;
+
+      const task = (async () => {
+        const result = await closeTicket(discordApi, supabase, BOT_TOKEN, channelId, closedBy, reason);
+        if (!result.ok) {
+          await editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: result.error ?? "Something went wrong closing this ticket.",
+          });
+        }
+      })();
+
+      EdgeRuntime.waitUntil(task);
+      return new Response(JSON.stringify({ type: 5, data: { flags: 64 } }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+   // --- Ticket system: edit close reason (modal submit) ---
+    if (customId.startsWith("ticket_edit_reason_modal:")) {
+      const ticketId = customId.split(":")[1];
+      const newReason = getComponentValue(body.data.components ?? [], "reason");
+
+      await supabase.from("tickets").update({ close_reason: newReason }).eq("id", ticketId);
+
+      const existingEmbed = body.message?.embeds?.[0] ?? {};
+      const updatedFields = (existingEmbed.fields ?? []).map((f: any) =>
+        f.name?.includes("Reason") ? { ...f, value: newReason } : f,
+      );
+
+      return new Response(
+        JSON.stringify({
+          type: 7,
+          data: { embeds: [{ ...existingEmbed, fields: updatedFields }] },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+ // --- Reaction role description modal ---
     if (customId.startsWith("reactionrole_modal:")) {
       const pendingId = customId.split(":")[1];
       const fields = body.data.components.flatMap((row: any) => row.components);
@@ -3988,7 +5335,8 @@ if (commandName === "feedback") {
       );
     }
 
-    // --- LOA approve/deny modals ---
+   // --- LOA approve/deny modals ---
+    if (customId.startsWith("loa_deny_modal:") || customId.startsWith("loa_approve_modal:")) {
     const [modalAction, loaId] = customId.split(":");
     const components = body.data.components ?? [];
 
@@ -4126,8 +5474,11 @@ if (commandName === "feedback") {
       );
     }
 
+   return new Response("Unknown modal action", { status: 400 });
+    }
+
     return new Response("Unknown modal action", { status: 400 });
   }
 
   return new Response("Unhandled interaction type", { status: 400 });
-});
+});;

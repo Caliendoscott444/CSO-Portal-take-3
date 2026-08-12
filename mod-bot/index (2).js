@@ -388,21 +388,9 @@ async function handlePrefixCommand(message) {
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
-  const isCommandAttempt = message.content.trim().startsWith('-');
-
-  // Respond when the bot itself is pinged (not @everyone/@here, not a role
-  // ping) — but not if the message is actually a -command (e.g. someone
-  // pinging the bot alongside a -warn/-kick target shouldn't trigger this).
-  if (!isCommandAttempt && message.mentions.has(client.user, { ignoreEveryone: true, ignoreRoles: true })) {
-    await message.channel.send({
-      content: '# **Im always watching Always watching**\n\nhttps://media.tenor.com/5TW0JMW-YVAAAAAM/mike-wazowski.gif',
-    }).catch(() => {});
-    return;
-  }
-
   if (await handleTc(message)) return;
 
-  if (isCommandAttempt) {
+  if (message.content.trim().startsWith('-')) {
     const handled = await handlePrefixCommand(message);
     if (handled) return;
   }

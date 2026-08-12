@@ -1,25 +1,19 @@
 /**
- * Role Backup / Restore + Live Role Change Log
+ * Role Backup / Restore
  * -------------------------------------------------------------------------
- * Two related features:
- *
- * 1. Backup on leave/kick/ban — saves a member's roles when they leave so
- *    staff can restore them with one click if the member rejoins.
- *
- * 2. Live role change log — logs every single role added or removed from
- *    any member, in real time, with a button to instantly undo that one
- *    change (re-add if it was removed, revoke if it was added).
+ * Saves a member's roles when they leave a server (kicked, left voluntarily,
+ * or banned) so staff can restore them with one click if the member rejoins.
  *
  * Storage: a JSON file per guild in ./data/roleBackups/<guildId>.json
  * Structure: { "<userId>": { "roles": ["<roleId>", ...], "username": "...", "savedAt": "..." } }
  *
- * Wire-up needed in index.js:
+ * Wire-up needed in index.js (see comments at the bottom of this file):
  *   1. Call saveRolesOnLeave(member) inside your guildMemberRemove handler.
- *   2. Post buildRestoreButton(member.id) to ROLE_LOG_CHANNEL_ID when
- *      someone leaves.
- *   3. Add a guildMemberUpdate handler that calls logRoleChanges(oldMember, newMember, logChannel).
- *   4. Call handleRestoreButton(interaction) AND handleRoleChangeButton(interaction)
- *      inside your interactionCreate handler.
+ *   2. Call postRestorePrompt(...) wherever you currently log a
+ *      leave/kick/ban event (e.g. your mod-log channel), so staff get a
+ *      button right there.
+ *   3. Call handleRestoreButton(interaction) inside your interactionCreate
+ *      handler, before/alongside your existing button-handling logic.
  */
 const fs = require('fs');
 const path = require('path');
@@ -33,7 +27,8 @@ const {
 const DATA_DIR = path.join(__dirname, 'data', 'roleBackups');
 
 // Roles that should never be auto-restored even if the member had them
-// (e.g. a "Booster" role Discord manages itself). Add role IDs if needed.
+// (e.g. a "Booster" role Discord manages itself, or an @everyone-equivalent).
+// Add role IDs here if needed.
 const EXCLUDED_ROLE_IDS = [];
 
 function ensureDataDir() {
@@ -61,16 +56,18 @@ function saveGuildBackups(guildId, data) {
   fs.writeFileSync(backupPath(guildId), JSON.stringify(data, null, 2));
 }
 
-// ---------------------------------------------------------------------------
-// Backup on leave/kick/ban
-// ---------------------------------------------------------------------------
+/**
+ * Call this from your guildMemberRemove event (covers leaves AND kicks —
+ * Discord fires this event for both). Also call it from guildBanAdd if you
+ * want bans captured even when the member wasn't already removed.
+ */
 function saveRolesOnLeave(member) {
   const roleIds = member.roles.cache
     .filter((r) => r.id !== member.guild.id) // drop @everyone
     .filter((r) => !EXCLUDED_ROLE_IDS.includes(r.id))
     .map((r) => r.id);
 
-  if (roleIds.length === 0) return;
+  if (roleIds.length === 0) return; // nothing worth saving
 
   const backups = loadGuildBackups(member.guild.id);
   backups[member.id] = {
@@ -81,6 +78,11 @@ function saveRolesOnLeave(member) {
   saveGuildBackups(member.guild.id, backups);
 }
 
+/**
+ * Builds the "Restore Roles" button for a given user. Attach this to
+ * whatever embed/message you already post in your mod-log when someone
+ * leaves, is kicked, or is banned.
+ */
 function buildRestoreButton(userId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -90,6 +92,11 @@ function buildRestoreButton(userId) {
   );
 }
 
+/**
+ * Call this inside your interactionCreate handler for button interactions.
+ * Returns true if it handled the interaction (so your existing handler can
+ * skip it), false otherwise.
+ */
 async function handleRestoreButton(interaction) {
   if (!interaction.isButton()) return false;
   if (!interaction.customId.startsWith('restore_roles_')) return false;
@@ -97,8 +104,12 @@ async function handleRestoreButton(interaction) {
   const userId = interaction.customId.replace('restore_roles_', '');
   const guild = interaction.guild;
 
+  // Permission check: only staff who can manage roles should be able to click this.
   if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    await interaction.reply({ content: "You don't have permission to restore roles.", ephemeral: true });
+    await interaction.reply({
+      content: "You don't have permission to restore roles.",
+      ephemeral: true,
+    });
     return true;
   }
 
@@ -106,7 +117,10 @@ async function handleRestoreButton(interaction) {
   const record = backups[userId];
 
   if (!record) {
-    await interaction.reply({ content: 'No saved roles found for that user.', ephemeral: true });
+    await interaction.reply({
+      content: 'No saved roles found for that user.',
+      ephemeral: true,
+    });
     return true;
   }
 
@@ -115,12 +129,14 @@ async function handleRestoreButton(interaction) {
     member = await guild.members.fetch(userId);
   } catch {
     await interaction.reply({
-      content: "That user is not currently in the server, so their roles can't be restored yet. They need to rejoin first.",
+      content: 'That user is not currently in the server, so their roles can\'t be restored yet. They need to rejoin first.',
       ephemeral: true,
     });
     return true;
   }
 
+  // Filter out roles that no longer exist or that the bot can't assign
+  // (e.g. roles above the bot's own highest role).
   const botHighest = guild.members.me.roles.highest;
   const assignable = record.roles.filter((id) => {
     const role = guild.roles.cache.get(id);
@@ -132,120 +148,51 @@ async function handleRestoreButton(interaction) {
     await member.roles.add(assignable, 'Role restore via mod-log button');
   } catch (err) {
     console.error('Failed to restore roles:', err);
-    await interaction.reply({ content: "Something went wrong restoring roles — check the bot's console.", ephemeral: true });
+    await interaction.reply({
+      content: 'Something went wrong restoring roles — check the bot\'s console.',
+      ephemeral: true,
+    });
     return true;
   }
 
   let msg = `Restored ${assignable.length} role(s) to ${member.user.tag}.`;
-  if (skipped > 0) msg += ` (${skipped} role(s) skipped — deleted or above the bot's own role.)`;
+  if (skipped > 0) {
+    msg += ` (${skipped} role(s) skipped — deleted or above the bot's own role.)`;
+  }
 
   await interaction.reply({ content: msg, ephemeral: true });
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Live role change log — fires on every single role add/remove, for any
-// member, for any reason (staff action, self-assign via reaction roles,
-// another bot, etc). Each logged change gets its own undo button.
-// ---------------------------------------------------------------------------
-
 /**
- * Call this from a guildMemberUpdate listener. Diffs old vs new roles and
- * posts one log line + undo button per role that changed. Fire-and-forget.
+ * Call this from your guildMemberUpdate event to log every role add/remove
+ * to a channel. Never pings anyone: uses the member's username/tag (not an
+ * <@id> mention) and sets allowedMentions: { parse: [] } as a hard backstop
+ * so nothing in the message — not the username, not a role name — can ever
+ * trigger a notification, even accidentally.
  */
 async function logRoleChanges(oldMember, newMember, logChannel) {
-  const oldRoles = oldMember.roles.cache;
-  const newRoles = newMember.roles.cache;
-
-  const added = newRoles.filter((r) => !oldRoles.has(r.id) && r.id !== newMember.guild.id);
-  const removed = oldRoles.filter((r) => !newRoles.has(r.id) && r.id !== newMember.guild.id);
-
-  if (added.size === 0 && removed.size === 0) return; // nothing role-related changed
   if (!logChannel) return;
 
-  for (const role of added.values()) {
-    await logChannel.send({
-      content: `**Role Added**\n**User:** <@${newMember.id}>\n**Role:** <@&${role.id}>`,
-      components: [buildRoleChangeButtons(newMember.id, role.id, 'add')],
-    }).catch(() => {});
-  }
+  const oldRoleIds = new Set(oldMember.roles.cache.map((r) => r.id));
+  const newRoleIds = new Set(newMember.roles.cache.map((r) => r.id));
 
-  for (const role of removed.values()) {
-    await logChannel.send({
-      content: `**Role Removed**\n**User:** <@${newMember.id}>\n**Role:** <@&${role.id}>`,
-      components: [buildRoleChangeButtons(newMember.id, role.id, 'remove')],
-    }).catch(() => {});
-  }
-}
+  const addedIds = [...newRoleIds].filter((id) => !oldRoleIds.has(id));
+  const removedIds = [...oldRoleIds].filter((id) => !newRoleIds.has(id));
 
-/**
- * Builds the undo button for a single role change.
- * changeType is 'add' or 'remove' — describes what JUST happened, so the
- * button does the opposite (undo).
- */
-function buildRoleChangeButtons(userId, roleId, changeType) {
-  const undoAction = changeType === 'add' ? 'revoke' : 'restore';
-  const label = changeType === 'add' ? 'Revoke' : 'Restore';
-  const style = changeType === 'add' ? ButtonStyle.Danger : ButtonStyle.Success;
+  if (addedIds.length === 0 && removedIds.length === 0) return;
 
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`roleundo_${undoAction}_${userId}_${roleId}`)
-      .setLabel(label)
-      .setStyle(style)
-  );
-}
+  const roleName = (id) => newMember.guild.roles.cache.get(id)?.name || `Unknown role (${id})`;
 
-/**
- * Call this inside interactionCreate. Handles the per-role undo buttons
- * from the live log (separate from the leave/restore-all button above).
- */
-async function handleRoleChangeButton(interaction) {
-  if (!interaction.isButton()) return false;
-  if (!interaction.customId.startsWith('roleundo_')) return false;
+  const lines = [
+    ...addedIds.map((id) => `+ Added **${roleName(id)}**`),
+    ...removedIds.map((id) => `\u2212 Removed **${roleName(id)}**`),
+  ];
 
-  const [, action, userId, roleId] = interaction.customId.split('_');
-  const guild = interaction.guild;
-
-  if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    await interaction.reply({ content: "You don't have permission to do that.", ephemeral: true });
-    return true;
-  }
-
-  let member;
-  try {
-    member = await guild.members.fetch(userId);
-  } catch {
-    await interaction.reply({ content: 'That user is no longer in the server.', ephemeral: true });
-    return true;
-  }
-
-  const role = guild.roles.cache.get(roleId);
-  if (!role) {
-    await interaction.reply({ content: 'That role no longer exists.', ephemeral: true });
-    return true;
-  }
-
-  const botHighest = guild.members.me.roles.highest;
-  if (role.comparePositionTo(botHighest) >= 0) {
-    await interaction.reply({ content: "I can't manage that role — it's positioned above my own highest role.", ephemeral: true });
-    return true;
-  }
-
-  try {
-    if (action === 'restore') {
-      await member.roles.add(roleId, 'Quick-restore via role log button');
-      await interaction.reply({ content: `Restored **${role.name}** to ${member.user.tag}.`, ephemeral: true });
-    } else if (action === 'revoke') {
-      await member.roles.remove(roleId, 'Quick-revoke via role log button');
-      await interaction.reply({ content: `Revoked **${role.name}** from ${member.user.tag}.`, ephemeral: true });
-    }
-  } catch (err) {
-    console.error('Failed to undo role change:', err);
-    await interaction.reply({ content: "Something went wrong — check the bot's console.", ephemeral: true });
-  }
-
-  return true;
+  await logChannel.send({
+    content: `**${newMember.user.tag}** (${newMember.id})\n${lines.join('\n')}`,
+    allowedMentions: { parse: [] },
+  }).catch(() => {});
 }
 
 module.exports = {
@@ -253,5 +200,4 @@ module.exports = {
   buildRestoreButton,
   handleRestoreButton,
   logRoleChanges,
-  handleRoleChangeButton,
 };
