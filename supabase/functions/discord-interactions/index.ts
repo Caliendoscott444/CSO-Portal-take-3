@@ -1211,18 +1211,24 @@ Deno.serve(async (req) => {
   }
 
   // Mutes every existing role/member overwrite on the ticket channel except
-  // the claimer and TICKET_CLAIM_LOCK_ROLE_ID — VIEW_CHANNEL is left alone
-  // (so the channel doesn't disappear for anyone), only SEND_MESSAGES is
-  // denied. Called when a ticket is claimed.
-  async function lockTicketChannel(channelId: string, claimerId: string, allowedRoleId: string) {
+  // the claimer, the ticket opener, and TICKET_CLAIM_LOCK_ROLE_ID —
+  // VIEW_CHANNEL is left alone (so the channel doesn't disappear for
+  // anyone), only SEND_MESSAGES is denied. Called when a ticket is claimed.
+  async function lockTicketChannel(
+    channelId: string,
+    claimerId: string,
+    allowedRoleId: string,
+    openerId?: string | null,
+  ) {
     const chRes = await discordApi(`/channels/${channelId}`);
     if (!chRes.ok) throw new Error(`GET channel failed (${chRes.status}): ${await chRes.text()}`);
     const channel = await chRes.json();
     const overwrites: any[] = channel.permission_overwrites || [];
+    const exempt = new Set([allowedRoleId, claimerId, ...(openerId ? [openerId] : [])]);
 
     for (const ow of overwrites) {
       if (ow.id === channel.guild_id) continue; // @everyone already can't view/send
-      if (ow.id === allowedRoleId || ow.id === claimerId) continue;
+      if (exempt.has(ow.id)) continue;
       await setSendMessagesOverwrite(channelId, ow.id, ow.type, "deny", ow);
     }
 
@@ -1231,6 +1237,11 @@ Deno.serve(async (req) => {
 
     const claimerOverwrite = overwrites.find((o: any) => o.id === claimerId);
     await setSendMessagesOverwrite(channelId, claimerId, 1, "allow", claimerOverwrite);
+
+    if (openerId) {
+      const openerOverwrite = overwrites.find((o: any) => o.id === openerId);
+      await setSendMessagesOverwrite(channelId, openerId, 1, "allow", openerOverwrite);
+    }
   }
 
   // Restores normal ticket permissions — re-allows SEND_MESSAGES for the
@@ -3595,7 +3606,7 @@ if (commandName === "claim") {
       await supabase.from("tickets").update({ claimed_by: discordUserId }).eq("id", ticket.id);
 
       try {
-        await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID);
+        await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID, ticket.opener_id);
       } catch (err) {
         console.error("[/claim] lockTicketChannel failed:", err);
       }
@@ -3603,7 +3614,7 @@ if (commandName === "claim") {
       await discordApi(`/channels/${body.channel_id}/messages`, {
         method: "POST",
         body: JSON.stringify({
-          content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}> and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
+          content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}>, the ticket opener, and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
         }),
       }).catch(() => {});
 
@@ -4097,7 +4108,7 @@ if (customId.startsWith("ticket_open_")) {
       await supabase.from("tickets").update({ claimed_by: discordUserId }).eq("id", ticket.id);
 
       try {
-        await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID);
+        await lockTicketChannel(body.channel_id, discordUserId!, TICKET_CLAIM_LOCK_ROLE_ID, ticket.opener_id);
       } catch (err) {
         console.error("[ticket_claim] lockTicketChannel failed:", err);
       }
@@ -4105,7 +4116,7 @@ if (customId.startsWith("ticket_open_")) {
       await discordApi(`/channels/${body.channel_id}/messages`, {
         method: "POST",
         body: JSON.stringify({
-          content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}> and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
+          content: `\uD83D\uDD12 This ticket has been claimed by <@${discordUserId}>. Only <@${discordUserId}>, the ticket opener, and <@&${TICKET_CLAIM_LOCK_ROLE_ID}> can send messages here now.`,
         }),
       }).catch(() => {});
 
